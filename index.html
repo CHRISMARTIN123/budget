@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Budget</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23111'/%3E%3Cpath d='M8 17V11M12 17V7M16 17v-4' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Budget">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -31,6 +39,15 @@
       <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter-fill"></div></div>
     </div>
 
+    <div class="savings" id="savings-card" hidden>
+      <div class="savings-top">
+        <span class="savings-title">Savings this month</span>
+        <span class="savings-value" id="savings-value">$0</span>
+      </div>
+      <div class="meter" aria-hidden="true"><div class="meter-fill" id="savings-fill"></div></div>
+      <p class="savings-sub" id="savings-sub"></p>
+    </div>
+
     <div class="recent">
       <h2 class="section-title">Recent purchases</h2>
       <ul class="txn-list" id="recent-list"></ul>
@@ -41,7 +58,7 @@
   <!-- ============ ADD ============ -->
   <section id="view-add" class="view">
     <header class="topbar">
-      <h1 class="brand">Add purchase</h1>
+      <h1 class="brand" id="add-title">Add purchase</h1>
     </header>
 
     <form id="add-form" autocomplete="off">
@@ -68,7 +85,7 @@
         <input type="date" id="in-date" required>
       </label>
 
-      <button class="primary-btn" type="submit">Save purchase</button>
+      <button class="primary-btn" type="submit" id="btn-save-purchase">Save purchase</button>
     </form>
   </section>
 
@@ -133,11 +150,29 @@
 <!-- Budget dialog -->
 <dialog id="budget-dialog">
   <form method="dialog" id="budget-form">
-    <h2 class="dialog-title">Monthly budget</h2>
-    <p class="dialog-sub">Week and day balances are prorated from this.</p>
-    <div class="amount-wrap">
-      <span class="amount-symbol">$</span>
-      <input type="text" inputmode="decimal" id="in-budget" placeholder="2000">
+    <h2 class="dialog-title">Budget &amp; savings</h2>
+    <p class="dialog-sub">Week and day balances are prorated from the monthly budget, after setting your savings aside.</p>
+    <label class="field">
+      <span class="field-label">Monthly budget</span>
+      <div class="amount-wrap">
+        <span class="amount-symbol">$</span>
+        <input type="text" inputmode="decimal" id="in-budget" placeholder="2000">
+      </div>
+    </label>
+    <label class="field">
+      <span class="field-label">Savings goal <em>(per month)</em></span>
+      <div class="amount-wrap">
+        <span class="amount-symbol">$</span>
+        <input type="text" inputmode="decimal" id="in-savings" placeholder="0">
+      </div>
+    </label>
+    <div class="backup">
+      <span class="field-label">Your data</span>
+      <div class="backup-row">
+        <button type="button" class="ghost-btn" id="btn-export">Export backup</button>
+        <button type="button" class="ghost-btn" id="btn-import">Import backup</button>
+        <input type="file" id="in-import" accept=".json,application/json" hidden>
+      </div>
     </div>
     <div class="dialog-actions">
       <button class="ghost-btn" value="cancel" type="button" id="btn-budget-cancel">Cancel</button>
