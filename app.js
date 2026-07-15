@@ -122,7 +122,15 @@ const $ = (sel) => document.querySelector(sel);
 
 // Stat-led reveal: tick the hero figure from 0 to target (~480ms), whole
 // dollars during flight, exact value on the final frame. Reduced-motion safe.
+// A single rAF handle is tracked so a new render (e.g. switching period) can
+// cancel any in-flight tick — otherwise the old animation overwrites the new
+// value and the balance looks stuck on the previous period.
+let heroAnim = null;
+function stopHeroAnim() {
+  if (heroAnim != null) { cancelAnimationFrame(heroAnim); heroAnim = null; }
+}
 function animateCount(el, to) {
+  stopHeroAnim();
   if (!Number.isFinite(to) || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     el.textContent = money(to);
     return;
@@ -131,10 +139,10 @@ function animateCount(el, to) {
   const step = (t) => {
     const p = Math.min(1, (t - t0) / dur);
     const eased = 1 - Math.pow(1 - p, 3);
-    if (p < 1) { el.textContent = money(Math.round(to * eased)); requestAnimationFrame(step); }
-    else el.textContent = money(to);
+    if (p < 1) { el.textContent = money(Math.round(to * eased)); heroAnim = requestAnimationFrame(step); }
+    else { el.textContent = money(to); heroAnim = null; }
   };
-  requestAnimationFrame(step);
+  heroAnim = requestAnimationFrame(step);
 }
 
 function renderHome(animate) {
@@ -162,8 +170,12 @@ function renderHome(animate) {
     meterFill.style.width = pct.toFixed(1) + "%";
   }
 
-  if (animate) animateCount(heroValue, heroTarget);
-  else heroValue.textContent = money(heroTarget);
+  if (animate) {
+    animateCount(heroValue, heroTarget);
+  } else {
+    stopHeroAnim(); // a non-animated render (period switch) must win over any in-flight tick
+    heroValue.textContent = money(heroTarget);
+  }
 
   $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Settings";
   renderCycleCard();
@@ -430,6 +442,7 @@ function setupAddForm() {
     }
     saveStore();
     resetAddForm();
+    renderInsights(); // keep the insights view in sync even before it's opened
     switchView("home");
   });
 }

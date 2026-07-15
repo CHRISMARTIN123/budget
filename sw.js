@@ -1,4 +1,4 @@
-const CACHE = "budget-v4";
+const CACHE = "budget-v5";
 const ASSETS = [
   "./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
   "icon-180.png", "icon-192.png", "icon-512.png",
@@ -18,7 +18,19 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+// Stale-while-revalidate: serve from cache instantly, refresh the cache in the
+// background so the next load gets the latest deploy. This stops an installed
+// app from getting stuck on an old bundle after a fix ships.
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then((hit) => hit || fetch(e.request)));
+  const req = e.request;
+  if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(req, { ignoreSearch: true });
+    const network = fetch(req).then((res) => {
+      if (res && res.ok && res.type === "basic") cache.put(req, res.clone());
+      return res;
+    }).catch(() => null);
+    return cached || (await network) || Response.error();
+  })());
 });
