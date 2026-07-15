@@ -603,3 +603,164 @@ dialog .amount-wrap input { font-size: var(--text-lg); padding: 10px var(--space
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .view.is-active { animation: none; }
 }
+
+/* ============ Home: safe-to-spend + view-all ============ */
+.hero-today {
+  margin-top: var(--space-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.view-all {
+  display: block;
+  width: 100%;
+  padding: var(--space-md) 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+}
+.view-all:hover { color: var(--ink); }
+.view-all:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ============ History ============ */
+.topbar-note { font-size: var(--text-sm); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.search-input { margin-bottom: var(--space-md); }
+.chip-row {
+  display: flex;
+  gap: var(--space-sm);
+  overflow-x: auto;
+  padding-bottom: var(--space-xs);
+  margin-bottom: var(--space-md);
+  scrollbar-width: none;
+}
+.chip-row::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+.chip:hover { border-color: var(--ink-3); color: var(--ink); }
+.chip:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.chip.is-active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.hist-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--space-lg) 0 var(--space-xs);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.hist-head-total { font-variant-numeric: tabular-nums; letter-spacing: 0; }
+
+/* ============ Add: repeat checkbox ============ */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.check-row input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--ink);
+  flex: none;
+}
+.check-row em { font-style: normal; color: var(--ink-3); }
+
+/* ============ Insights extras ============ */
+.card-sub {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  margin: -10px 0 var(--space-md);
+}
+.cat-row.is-over .cat-row-value { font-weight: 600; }
+.cat-row.is-over .cat-row-fill { background: var(--ink); opacity: 1; }
+.cat-row.is-over .cat-row-track { outline: 1px solid var(--ink-3); }
+
+/* ============ Settings page ============ */
+#view-settings .section-title { margin-top: var(--space-lg); }
+#view-settings .section-title:first-child { margin-top: 0; }
+.section-title em { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--ink-3); }
+.limits-title { margin-top: var(--space-xl); }
+.limit-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 128px;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--line);
+}
+.limit-row:last-child { border-bottom: 0; margin-bottom: var(--space-md); }
+.limit-icon { display: grid; place-items: center; color: var(--ink-2); }
+.limit-icon svg { width: 18px; height: 18px; }
+.limit-label { font-size: var(--text-sm); font-weight: 500; }
+.limit-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  transition: border-color var(--dur) var(--ease-out);
+}
+.limit-input:focus-within { border-color: var(--ink); }
+.limit-input span { color: var(--ink-3); font-size: var(--text-sm); }
+.limit-input input {
+  border: 0;
+  padding: 9px 2px;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+.limit-input input:hover, .limit-input input:focus-visible { border: 0; box-shadow: none; }
+#view-settings form { margin-bottom: var(--space-xl); }
+.settings-block { margin-bottom: var(--space-xl); }
+.txn-main.is-static { cursor: default; }
+.save-note {
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+  text-align: center;
+}
+.empty.small { padding: var(--space-md) 0; text-align: left; }
+.danger-btn {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+.danger-btn:hover { border-color: var(--ink); color: var(--ink); }
+.danger-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* the hidden attribute must beat .check-row's display: flex (edit mode hides it) */
+.check-row[hidden] { display: none; }
+
+/* five tabs now — distribute evenly instead of a fixed gap (overflowed at 320px) */
+.tabbar { gap: 0; justify-content: space-evenly; }
+.tab { min-width: 52px; }

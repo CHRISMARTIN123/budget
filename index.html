@@ -23,7 +23,7 @@
   <section id="view-home" class="view is-active">
     <header class="topbar">
       <h1 class="brand">Budget</h1>
-      <button class="ghost-btn" id="btn-budget" type="button">Set budget</button>
+      <button class="ghost-btn" id="btn-budget" type="button">Settings</button>
     </header>
 
     <div class="seg" role="tablist" aria-label="Balance period" id="period-seg">
@@ -37,6 +37,7 @@
       <p class="hero-value" id="hero-value">$0</p>
       <p class="hero-sub" id="hero-sub"></p>
       <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter-fill"></div></div>
+      <p class="hero-today" id="hero-today" hidden></p>
     </div>
 
     <div class="cyclecard" id="cycle-card" hidden>
@@ -52,7 +53,23 @@
       <h2 class="section-title">Recent purchases</h2>
       <ul class="txn-list" id="recent-list"></ul>
       <p class="empty" id="recent-empty" hidden>Nothing yet. Tap + to add your first purchase.</p>
+      <button class="view-all" id="btn-view-all" type="button" hidden>View all purchases</button>
     </div>
+  </section>
+
+  <!-- ============ HISTORY ============ -->
+  <section id="view-history" class="view">
+    <header class="topbar">
+      <h1 class="brand">History</h1>
+      <span class="topbar-note" id="hist-summary"></span>
+    </header>
+
+    <input type="text" id="in-search" class="search-input" placeholder="Search notes or categories" autocomplete="off">
+
+    <div class="chip-row" id="hist-chips" role="tablist" aria-label="Filter by category"></div>
+
+    <div id="hist-groups"></div>
+    <p class="empty" id="hist-empty" hidden>No purchases match.</p>
   </section>
 
   <!-- ============ ADD ============ -->
@@ -85,6 +102,11 @@
         <input type="date" id="in-date" required>
       </label>
 
+      <label class="check-row" id="repeat-row">
+        <input type="checkbox" id="in-repeat">
+        <span>Repeats monthly <em>— rent, subscriptions, gym. Added automatically on this day each month.</em></span>
+      </label>
+
       <button class="primary-btn" type="submit" id="btn-save-purchase">Save purchase</button>
     </form>
   </section>
@@ -105,10 +127,12 @@
       <div class="tile">
         <p class="tile-label">Total spent</p>
         <p class="tile-value" id="stat-total">$0</p>
+        <p class="tile-sub" id="stat-total-delta"></p>
       </div>
       <div class="tile">
         <p class="tile-label">Daily average</p>
         <p class="tile-value" id="stat-avg">$0</p>
+        <p class="tile-sub" id="stat-avg-delta"></p>
       </div>
       <div class="tile">
         <p class="tile-label">Most in a day</p>
@@ -122,12 +146,76 @@
       <div class="chart-wrap" id="daily-chart"></div>
     </div>
 
+    <div class="card" id="catbudget-card" hidden>
+      <h2 class="card-title">Category budgets</h2>
+      <p class="card-sub">This cycle, against the limits set in Settings.</p>
+      <div class="cat-bars" id="catbudget-chart"></div>
+    </div>
+
     <div class="card">
       <h2 class="card-title">Spending by category</h2>
       <div class="cat-bars" id="cat-chart"></div>
     </div>
 
+    <div class="card">
+      <h2 class="card-title">Monthly trend</h2>
+      <p class="card-sub">Total spent per cycle, last six cycles.</p>
+      <div class="chart-wrap" id="trend-chart"></div>
+    </div>
+
     <p class="empty" id="insights-empty" hidden>No purchases in this range.</p>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="view-settings" class="view">
+    <header class="topbar">
+      <h1 class="brand">Settings</h1>
+    </header>
+
+    <form id="settings-form" autocomplete="off">
+      <h2 class="section-title">Budget</h2>
+      <label class="field">
+        <span class="field-label">Monthly budget</span>
+        <div class="amount-wrap">
+          <span class="amount-symbol">$</span>
+          <input type="text" inputmode="decimal" id="in-budget" placeholder="2000">
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Savings goal <em>(set aside each month)</em></span>
+        <div class="amount-wrap">
+          <span class="amount-symbol">$</span>
+          <input type="text" inputmode="decimal" id="in-savings" placeholder="0">
+        </div>
+      </label>
+      <label class="field">
+        <span class="field-label">Cycle starts on day <em>(e.g. payday)</em></span>
+        <input type="number" inputmode="numeric" id="in-cyclestart" min="1" max="28" placeholder="1">
+      </label>
+
+      <h2 class="section-title limits-title">Category limits <em>(per cycle, optional)</em></h2>
+      <div id="limit-rows"></div>
+
+      <button class="primary-btn" type="submit" id="btn-settings-save">Save settings</button>
+      <p class="save-note" id="save-note" hidden>Saved.</p>
+    </form>
+
+    <div class="settings-block">
+      <h2 class="section-title">Repeating purchases</h2>
+      <ul class="txn-list" id="recurring-list"></ul>
+      <p class="empty small" id="recurring-empty">None yet. Tick “Repeats monthly” when adding a purchase and it will be added automatically each month.</p>
+    </div>
+
+    <div class="settings-block">
+      <h2 class="section-title">Your data</h2>
+      <div class="backup-row">
+        <button type="button" class="ghost-btn" id="btn-export">Export backup</button>
+        <button type="button" class="ghost-btn" id="btn-export-csv">Export CSV</button>
+        <button type="button" class="ghost-btn" id="btn-import">Import backup</button>
+        <input type="file" id="in-import" accept=".json,application/json" hidden>
+      </div>
+      <button type="button" class="danger-btn" id="btn-erase">Erase all data</button>
+    </div>
   </section>
 
 </main>
@@ -138,6 +226,10 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
     <span>Home</span>
   </button>
+  <button class="tab" data-view="history" aria-label="History">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+    <span>History</span>
+  </button>
   <button class="tab tab-add" data-view="add" aria-label="Add purchase">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   </button>
@@ -145,45 +237,11 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M5 20V14"/><path d="M12 20V8"/><path d="M19 20V4"/></svg>
     <span>Insights</span>
   </button>
+  <button class="tab" data-view="settings" aria-label="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></svg>
+    <span>Settings</span>
+  </button>
 </nav>
-
-<!-- Budget dialog -->
-<dialog id="budget-dialog">
-  <form method="dialog" id="budget-form">
-    <h2 class="dialog-title">Budget &amp; savings</h2>
-    <p class="dialog-sub">Week and day balances are prorated from the budget, after your savings are set aside. Set the cycle start day to match your pay date.</p>
-    <label class="field">
-      <span class="field-label">Monthly budget</span>
-      <div class="amount-wrap">
-        <span class="amount-symbol">$</span>
-        <input type="text" inputmode="decimal" id="in-budget" placeholder="2000">
-      </div>
-    </label>
-    <label class="field">
-      <span class="field-label">Savings goal <em>(per month)</em></span>
-      <div class="amount-wrap">
-        <span class="amount-symbol">$</span>
-        <input type="text" inputmode="decimal" id="in-savings" placeholder="0">
-      </div>
-    </label>
-    <label class="field">
-      <span class="field-label">Cycle starts on day <em>(e.g. payday)</em></span>
-      <input type="number" inputmode="numeric" id="in-cyclestart" min="1" max="28" placeholder="1">
-    </label>
-    <div class="backup">
-      <span class="field-label">Your data</span>
-      <div class="backup-row">
-        <button type="button" class="ghost-btn" id="btn-export">Export backup</button>
-        <button type="button" class="ghost-btn" id="btn-import">Import backup</button>
-        <input type="file" id="in-import" accept=".json,application/json" hidden>
-      </div>
-    </div>
-    <div class="dialog-actions">
-      <button class="ghost-btn" value="cancel" type="button" id="btn-budget-cancel">Cancel</button>
-      <button class="primary-btn" value="save" id="btn-budget-save">Save</button>
-    </div>
-  </form>
-</dialog>
 
 <div class="tooltip" id="tooltip" hidden></div>
 

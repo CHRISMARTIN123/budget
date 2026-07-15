@@ -24,18 +24,23 @@ function loadStore() {
       if (data && Array.isArray(data.purchases)) {
         if (typeof data.savingsGoal !== "number") data.savingsGoal = 0;
         if (typeof data.cycleStartDay !== "number") data.cycleStartDay = 1;
+        if (!data.categoryBudgets || typeof data.categoryBudgets !== "object") data.categoryBudgets = {};
+        if (!Array.isArray(data.recurring)) data.recurring = [];
         return data;
       }
     }
   } catch (_) { /* corrupted store — start fresh */ }
-  return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, purchases: [] };
+  return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, categoryBudgets: {}, recurring: [], purchases: [] };
 }
 function saveStore() {
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
 }
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
 
 const store = loadStore();
-const state = { period: "month", range: "7", view: "home", selectedCat: "food", editingId: null };
+const state = { period: "month", range: "7", view: "home", selectedCat: "food", editingId: null, histCat: "all", histQuery: "" };
 
 /* ============ Date helpers (all local time) ============ */
 const DAY_MS = 86400000;
@@ -79,12 +84,46 @@ function money(n, forceCents) {
   return (useCents ? fmtCents : fmtWhole).format(n);
 }
 
+/* ============ Recurring purchases ============ */
+// A rule posts a copy of its purchase on the same day each month (clamped to
+// month length). Due occurrences are back-filled on every app open.
+function nextDueKey(rule) {
+  const last = parseKey(rule.lastPosted);
+  const y = last.getFullYear(), m = last.getMonth() + 1;
+  const day = Math.min(rule.day, daysInMonth(new Date(y, m, 1)));
+  return dateKey(new Date(y, m, day));
+}
+function processRecurring() {
+  const today = todayKey();
+  let changed = false;
+  for (const rule of store.recurring) {
+    let guard = 0;
+    while (guard++ < 36) {
+      const due = nextDueKey(rule);
+      if (due > today) break;
+      store.purchases.push({
+        id: uid(), amount: rule.amount, category: rule.category, note: rule.note,
+        date: due, createdAt: Date.now(), recurringId: rule.id,
+      });
+      rule.lastPosted = due;
+      changed = true;
+    }
+  }
+  if (changed) saveStore();
+}
+
 /* ============ Aggregation ============ */
 function spentBetween(from, to) { // [from, to) as Date, date-key comparison
   const a = dateKey(from), b = dateKey(to);
   let sum = 0;
   for (const p of store.purchases) if (p.date >= a && p.date < b) sum += p.amount;
   return sum;
+}
+function spentByCategoryBetween(from, to) {
+  const a = dateKey(from), b = dateKey(to);
+  const map = new Map();
+  for (const p of store.purchases) if (p.date >= a && p.date < b) map.set(p.category, (map.get(p.category) || 0) + p.amount);
+  return map;
 }
 
 function periodInfo() {
@@ -102,7 +141,7 @@ function periodInfo() {
     const label = cycleStartDay() === 1 ? "Left this month" : "Left this cycle";
     return {
       label, budget: spendable, spent: spentBetween(cycle.start, cycle.end),
-      daysLeft: Math.round((cycle.end - today) / DAY_MS),
+      daysLeft: Math.round((cycle.end - today) / DAY_MS), dailyRate,
     };
   }
   if (state.period === "week") {
@@ -110,11 +149,11 @@ function periodInfo() {
     const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
     return {
       label: "Left this week", budget: dailyRate == null ? null : dailyRate * 7,
-      spent: spentBetween(from, to), daysLeft: Math.round((to - today) / DAY_MS),
+      spent: spentBetween(from, to), daysLeft: Math.round((to - today) / DAY_MS), dailyRate,
     };
   }
   const to = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  return { label: "Left today", budget: dailyRate, spent: spentBetween(today, to), daysLeft: 0 };
+  return { label: "Left today", budget: dailyRate, spent: spentBetween(today, to), daysLeft: 0, dailyRate };
 }
 
 /* ============ Home ============ */
@@ -152,12 +191,14 @@ function renderHome(animate) {
   const heroValue = $("#hero-value");
   const heroSub = $("#hero-sub");
   const meterFill = $("#meter-fill");
+  const heroToday = $("#hero-today");
   let heroTarget;
 
   if (info.budget == null) {
     heroTarget = -info.spent || 0;
-    heroSub.textContent = "Set a monthly budget to track what's left.";
+    heroSub.textContent = "Set a monthly budget in Settings to track what's left.";
     meterFill.style.width = "0%";
+    heroToday.hidden = true;
   } else {
     const left = info.budget - info.spent;
     heroTarget = left;
@@ -168,6 +209,19 @@ function renderHome(animate) {
     heroSub.textContent = parts.join(" · ");
     const pct = info.budget > 0 ? Math.min(100, (info.spent / info.budget) * 100) : 100;
     meterFill.style.width = pct.toFixed(1) + "%";
+
+    // safe-to-spend today (PocketGuard-style), on month/week views
+    if (state.period !== "day" && info.dailyRate != null) {
+      const today = midnight(new Date());
+      const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+      const todayLeft = info.dailyRate - spentBetween(today, tomorrow);
+      heroToday.hidden = false;
+      heroToday.textContent = todayLeft >= 0
+        ? `Safe to spend today · ${money(todayLeft, true)}`
+        : `${money(-todayLeft, true)} over today's pace`;
+    } else {
+      heroToday.hidden = true;
+    }
   }
 
   if (animate) {
@@ -177,7 +231,6 @@ function renderHome(animate) {
     heroValue.textContent = money(heroTarget);
   }
 
-  $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Settings";
   renderCycleCard();
   renderRecent();
 }
@@ -311,6 +364,7 @@ function renderHomeChart({ cycle, cLen, elapsed, cum, spendable, budget }) {
   wrap.append(svg);
 }
 
+/* ============ Purchase rows (shared by Home + History) ============ */
 function friendlyDate(key) {
   const t = todayKey();
   if (key === t) return "Today";
@@ -318,54 +372,121 @@ function friendlyDate(key) {
   return parseKey(key).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function purchaseRow(p, { showDate }) {
+  const cat = catById(p.category);
+  const li = document.createElement("li");
+  li.className = "txn";
+
+  const icon = document.createElement("span");
+  icon.className = "txn-icon";
+  icon.innerHTML = cat.icon; // static app-defined SVG, never user input
+
+  const main = document.createElement("div");
+  main.className = "txn-main";
+  const title = document.createElement("p");
+  title.className = "txn-title";
+  title.textContent = (p.note || cat.label) + (p.recurringId ? " ↻" : "");
+  const meta = document.createElement("p");
+  meta.className = "txn-meta";
+  meta.textContent = showDate ? `${cat.label} · ${friendlyDate(p.date)}` : cat.label;
+  main.append(title, meta);
+  main.addEventListener("click", () => startEdit(p));
+
+  const amount = document.createElement("span");
+  amount.className = "txn-amount";
+  amount.textContent = money(p.amount, true);
+
+  const del = document.createElement("button");
+  del.className = "txn-del";
+  del.type = "button";
+  del.textContent = "×";
+  del.setAttribute("aria-label", "Delete purchase");
+  del.addEventListener("click", () => {
+    if (!confirm(`Delete ${money(p.amount, true)} (${p.note || cat.label})?`)) return;
+    store.purchases = store.purchases.filter((x) => x.id !== p.id);
+    saveStore();
+    renderAll();
+  });
+
+  li.append(icon, main, amount, del);
+  return li;
+}
+
+function sortedPurchases() {
+  return [...store.purchases].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt);
+}
+
 function renderRecent() {
   const list = $("#recent-list");
   list.textContent = "";
-  const items = [...store.purchases]
-    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
-    .slice(0, 25);
+  const items = sortedPurchases().slice(0, 8);
 
   $("#recent-empty").hidden = items.length > 0;
+  $("#btn-view-all").hidden = store.purchases.length <= 8;
 
-  for (const p of items) {
+  for (const p of items) list.append(purchaseRow(p, { showDate: true }));
+}
+
+/* ============ History ============ */
+function renderHistChips() {
+  const wrap = $("#hist-chips");
+  wrap.textContent = "";
+  const mk = (id, label) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (state.histCat === id ? " is-active" : "");
+    b.textContent = label;
+    b.addEventListener("click", () => { state.histCat = id; renderHistory(); });
+    return b;
+  };
+  wrap.append(mk("all", "All"));
+  for (const c of CATEGORIES) wrap.append(mk(c.id, c.label));
+}
+
+function renderHistory() {
+  renderHistChips();
+  const groupsEl = $("#hist-groups");
+  groupsEl.textContent = "";
+
+  const q = state.histQuery.trim().toLowerCase();
+  const items = sortedPurchases().filter((p) => {
+    if (state.histCat !== "all" && p.category !== state.histCat) return false;
+    if (!q) return true;
     const cat = catById(p.category);
-    const li = document.createElement("li");
-    li.className = "txn";
+    return (p.note || "").toLowerCase().includes(q) || cat.label.toLowerCase().includes(q);
+  });
 
-    const icon = document.createElement("span");
-    icon.className = "txn-icon";
-    icon.innerHTML = cat.icon; // static app-defined SVG, never user input
+  const total = items.reduce((s, p) => s + p.amount, 0);
+  $("#hist-summary").textContent = items.length
+    ? `${items.length} purchase${items.length === 1 ? "" : "s"} · ${money(total)}`
+    : "";
+  $("#hist-empty").hidden = items.length > 0;
 
-    const main = document.createElement("div");
-    main.className = "txn-main";
-    const title = document.createElement("p");
-    title.className = "txn-title";
-    title.textContent = p.note || cat.label;
-    const meta = document.createElement("p");
-    meta.className = "txn-meta";
-    meta.textContent = `${cat.label} · ${friendlyDate(p.date)}`;
-    main.append(title, meta);
-    main.addEventListener("click", () => startEdit(p));
-
-    const amount = document.createElement("span");
-    amount.className = "txn-amount";
-    amount.textContent = money(p.amount, true);
-
-    const del = document.createElement("button");
-    del.className = "txn-del";
-    del.type = "button";
-    del.textContent = "×";
-    del.setAttribute("aria-label", "Delete purchase");
-    del.addEventListener("click", () => {
-      if (!confirm(`Delete ${money(p.amount, true)} (${title.textContent})?`)) return;
-      store.purchases = store.purchases.filter((x) => x.id !== p.id);
-      saveStore();
-      renderHome();
-      renderInsights();
-    });
-
-    li.append(icon, main, amount, del);
-    list.append(li);
+  // group by date
+  let currentKey = null, ul = null;
+  const CAP = 300;
+  for (const p of items.slice(0, CAP)) {
+    if (p.date !== currentKey) {
+      currentKey = p.date;
+      const head = document.createElement("div");
+      head.className = "hist-head";
+      const label = document.createElement("span");
+      label.textContent = friendlyDate(p.date) + " · " + parseKey(p.date).toLocaleDateString("en-US", { weekday: "short" });
+      const dayTotal = document.createElement("span");
+      dayTotal.className = "hist-head-total";
+      dayTotal.textContent = money(items.filter((x) => x.date === p.date).reduce((s, x) => s + x.amount, 0), true);
+      head.append(label, dayTotal);
+      ul = document.createElement("ul");
+      ul.className = "txn-list";
+      groupsEl.append(head, ul);
+    }
+    ul.append(purchaseRow(p, { showDate: false }));
+  }
+  if (items.length > CAP) {
+    const note = document.createElement("p");
+    note.className = "empty small";
+    note.textContent = `Showing the first ${CAP} — narrow the search to see older ones.`;
+    groupsEl.append(note);
   }
 }
 
@@ -402,6 +523,7 @@ function resetAddForm() {
   $("#in-date").value = todayKey();
   $("#add-title").textContent = "Add purchase";
   $("#btn-save-purchase").textContent = "Save purchase";
+  $("#repeat-row").hidden = false;
 }
 
 function startEdit(p) {
@@ -411,6 +533,8 @@ function startEdit(p) {
   $("#in-amount").value = p.amount.toFixed(2);
   $("#in-note").value = p.note || "";
   $("#in-date").value = p.date;
+  $("#in-repeat").checked = false;
+  $("#repeat-row").hidden = true; // repeat is set when creating, managed in Settings after
   $("#add-title").textContent = "Edit purchase";
   $("#btn-save-purchase").textContent = "Save changes";
   switchView("add");
@@ -431,18 +555,22 @@ function setupAddForm() {
     if (editing) {
       Object.assign(editing, { amount, category: state.selectedCat, note, date });
     } else {
-      store.purchases.push({
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-        amount,
-        category: state.selectedCat,
-        note,
-        date,
-        createdAt: Date.now(),
-      });
+      const purchase = {
+        id: uid(), amount, category: state.selectedCat, note, date, createdAt: Date.now(),
+      };
+      if ($("#in-repeat").checked) {
+        const rule = {
+          id: uid(), amount, category: state.selectedCat, note,
+          day: parseKey(date).getDate(), lastPosted: date,
+        };
+        store.recurring.push(rule);
+        purchase.recurringId = rule.id;
+      }
+      store.purchases.push(purchase);
     }
     saveStore();
     resetAddForm();
-    renderInsights(); // keep the insights view in sync even before it's opened
+    renderAll();
     switchView("home");
   });
 }
@@ -457,6 +585,15 @@ function rangeInfo() {
   }
   const days = Number(state.range);
   return { from: new Date(today.getFullYear(), today.getMonth(), today.getDate() - days + 1), days };
+}
+
+// "▲ 12% vs prev" — compares a total against the window of equal length
+// immediately before the current one.
+function deltaText(current, previous) {
+  if (previous <= 0) return current > 0 ? "no spend in prev. period" : "";
+  const pct = Math.round(((current - previous) / previous) * 100);
+  if (pct === 0) return "same as prev. period";
+  return `${pct > 0 ? "▲" : "▼"} ${Math.abs(pct)}% vs prev.`;
 }
 
 function renderInsights() {
@@ -480,9 +617,15 @@ function renderInsights() {
     total += p.amount;
   }
 
+  // previous window of equal length, for the deltas
+  const prevFrom = new Date(from.getFullYear(), from.getMonth(), from.getDate() - days);
+  const prevTotal = spentBetween(prevFrom, from);
+
   // stat tiles
   $("#stat-total").textContent = money(total);
+  $("#stat-total-delta").textContent = deltaText(total, prevTotal);
   $("#stat-avg").textContent = money(days > 0 ? total / days : 0);
+  $("#stat-avg-delta").textContent = deltaText(days > 0 ? total / days : 0, days > 0 ? prevTotal / days : 0);
   const max = perDay.reduce((a, b) => (b.total > a.total ? b : a), perDay[0] || { total: 0 });
   $("#stat-max").textContent = money(max ? max.total : 0);
   $("#stat-max-day").textContent = max && max.total > 0
@@ -491,7 +634,123 @@ function renderInsights() {
 
   $("#insights-empty").hidden = total > 0;
   renderDailyChart(perDay);
+  renderCatBudgets();
   renderCatChart(perCat, total);
+  renderTrendChart();
+}
+
+/* --- category budgets vs limits (always current cycle) --- */
+function renderCatBudgets() {
+  const card = $("#catbudget-card");
+  const wrap = $("#catbudget-chart");
+  const limits = CATEGORIES.filter((c) => (store.categoryBudgets[c.id] || 0) > 0);
+  if (limits.length === 0) { card.hidden = true; return; }
+  card.hidden = false;
+  wrap.textContent = "";
+
+  const cycle = cycleRange(new Date());
+  const spentMap = spentByCategoryBetween(cycle.start, cycle.end);
+
+  for (const cat of limits) {
+    const limit = store.categoryBudgets[cat.id];
+    const spent = spentMap.get(cat.id) || 0;
+    const over = spent > limit;
+
+    const row = document.createElement("div");
+    row.className = "cat-row" + (over ? " is-over" : "");
+
+    const icon = document.createElement("span");
+    icon.className = "cat-row-icon";
+    icon.innerHTML = cat.icon;
+
+    const main = document.createElement("div");
+    main.className = "cat-row-main";
+    const top = document.createElement("div");
+    top.className = "cat-row-top";
+    const label = document.createElement("span");
+    label.className = "cat-row-label";
+    label.textContent = cat.label;
+    const value = document.createElement("span");
+    value.className = "cat-row-value";
+    value.textContent = over
+      ? `${money(spent)} of ${money(limit)} · ${money(spent - limit)} over`
+      : `${money(spent)} of ${money(limit)}`;
+    top.append(label, value);
+
+    const track = document.createElement("div");
+    track.className = "cat-row-track";
+    const fill = document.createElement("div");
+    fill.className = "cat-row-fill";
+    fill.style.width = Math.min(100, (limit > 0 ? (spent / limit) * 100 : 0)).toFixed(1) + "%";
+    track.append(fill);
+
+    main.append(top, track);
+    row.append(icon, main);
+    wrap.append(row);
+  }
+}
+
+/* --- monthly trend: totals for the last six cycles --- */
+function renderTrendChart() {
+  const wrap = $("#trend-chart");
+  wrap.textContent = "";
+
+  const cycles = [];
+  let ref = new Date();
+  for (let k = 0; k < 6; k++) {
+    const c = cycleRange(ref);
+    cycles.unshift({ ...c, total: spentBetween(c.start, c.end) });
+    ref = new Date(c.start.getFullYear(), c.start.getMonth(), c.start.getDate() - 1);
+  }
+
+  const W = 400, H = 150;
+  const pad = { top: 22, right: 6, bottom: 22, left: 38 };
+  const iw = W - pad.left - pad.right;
+  const ih = H - pad.top - pad.bottom;
+  const maxVal = niceMax(Math.max(...cycles.map((c) => c.total), 0));
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Total spent per cycle, last six cycles" });
+  for (const t of [0, 0.5, 1]) {
+    const y = pad.top + ih - ih * t;
+    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: "chart-grid" }));
+    const tick = svgEl("text", { x: pad.left - 7, y: y + 3.5, "text-anchor": "end", class: "chart-tick" });
+    tick.textContent = "$" + Math.round(maxVal * t).toLocaleString("en-US");
+    svg.append(tick);
+  }
+
+  const band = iw / cycles.length;
+  const colW = Math.min(24, band * 0.5);
+  const maxCycle = cycles.reduce((a, b) => (b.total > a.total ? b : a), cycles[0]);
+
+  cycles.forEach((c, i) => {
+    const cx = pad.left + band * i + band / 2;
+    const h = maxVal > 0 ? (c.total / maxVal) * ih : 0;
+    const y = pad.top + ih - h;
+    const isCurrent = i === cycles.length - 1;
+
+    if (c.total > 0) {
+      svg.append(svgEl("path", { d: columnPath(cx - colW / 2, y, colW, h, 4), class: "chart-col" + (isCurrent ? "" : " is-dim") }));
+      if (c === maxCycle) {
+        const lbl = svgEl("text", { x: cx, y: y - 6, "text-anchor": "middle", class: "chart-toplabel" });
+        lbl.textContent = money(c.total);
+        svg.append(lbl);
+      }
+    }
+    const xl = svgEl("text", { x: cx, y: H - 6, "text-anchor": "middle", class: "chart-tick" });
+    xl.textContent = c.start.toLocaleDateString("en-US", { month: "short" });
+    svg.append(xl);
+
+    const hit = svgEl("rect", { x: pad.left + band * i, y: pad.top, width: band, height: ih, class: "chart-hit", tabindex: "0" });
+    const label = `${c.start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(c.end - DAY_MS).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${isCurrent ? " · so far" : ""}`;
+    const show = (ev) => showTooltip(money(c.total, true), label, ev);
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("pointerleave", hideTooltip);
+    hit.addEventListener("focus", () => show({ target: hit }));
+    hit.addEventListener("blur", hideTooltip);
+    svg.append(hit);
+  });
+
+  wrap.append(svg);
 }
 
 /* --- daily column chart (SVG) --- */
@@ -644,6 +903,192 @@ function renderCatChart(perCat, total) {
   }
 }
 
+/* ============ Settings ============ */
+function renderLimitRows() {
+  const wrap = $("#limit-rows");
+  wrap.textContent = "";
+  for (const cat of CATEGORIES) {
+    const row = document.createElement("label");
+    row.className = "limit-row";
+
+    const icon = document.createElement("span");
+    icon.className = "limit-icon";
+    icon.innerHTML = cat.icon;
+
+    const label = document.createElement("span");
+    label.className = "limit-label";
+    label.textContent = cat.label;
+
+    const box = document.createElement("div");
+    box.className = "limit-input";
+    const sym = document.createElement("span");
+    sym.textContent = "$";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.inputMode = "decimal";
+    input.placeholder = "—";
+    input.dataset.cat = cat.id;
+    const v = store.categoryBudgets[cat.id];
+    if (v > 0) input.value = String(v);
+    box.append(sym, input);
+
+    row.append(icon, label, box);
+    wrap.append(row);
+  }
+}
+
+function renderRecurringList() {
+  const list = $("#recurring-list");
+  list.textContent = "";
+  $("#recurring-empty").hidden = store.recurring.length > 0;
+
+  for (const rule of store.recurring) {
+    const cat = catById(rule.category);
+    const li = document.createElement("li");
+    li.className = "txn";
+
+    const icon = document.createElement("span");
+    icon.className = "txn-icon";
+    icon.innerHTML = cat.icon;
+
+    const main = document.createElement("div");
+    main.className = "txn-main is-static";
+    const title = document.createElement("p");
+    title.className = "txn-title";
+    title.textContent = rule.note || cat.label;
+    const meta = document.createElement("p");
+    meta.className = "txn-meta";
+    meta.textContent = `Day ${rule.day} each month · next ${friendlyDate(nextDueKey(rule))}`;
+    main.append(title, meta);
+
+    const amount = document.createElement("span");
+    amount.className = "txn-amount";
+    amount.textContent = money(rule.amount, true);
+
+    const del = document.createElement("button");
+    del.className = "txn-del";
+    del.type = "button";
+    del.textContent = "×";
+    del.setAttribute("aria-label", "Stop repeating");
+    del.addEventListener("click", () => {
+      if (!confirm(`Stop repeating "${rule.note || cat.label}"? Already-added purchases stay.`)) return;
+      store.recurring = store.recurring.filter((r) => r.id !== rule.id);
+      saveStore();
+      renderRecurringList();
+    });
+
+    li.append(icon, main, amount, del);
+    list.append(li);
+  }
+}
+
+function renderSettings() {
+  $("#in-budget").value = store.monthlyBudget != null ? String(store.monthlyBudget) : "";
+  $("#in-savings").value = store.savingsGoal > 0 ? String(store.savingsGoal) : "";
+  $("#in-cyclestart").value = String(cycleStartDay());
+  renderLimitRows();
+  renderRecurringList();
+}
+
+function parseNonNeg(raw) {
+  const s = String(raw).trim();
+  if (!s) return 0;
+  const n = parseFloat(s.replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+
+function setupSettings() {
+  $("#settings-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = parseAmount($("#in-budget").value);
+    if (v == null) { $("#in-budget").focus(); return; }
+    const goal = parseNonNeg($("#in-savings").value);
+    if (goal == null || goal >= v) { $("#in-savings").select(); return; }
+    const startRaw = parseInt($("#in-cyclestart").value, 10);
+    const start = Number.isFinite(startRaw) ? Math.min(28, Math.max(1, startRaw)) : 1;
+
+    const limits = {};
+    for (const input of document.querySelectorAll("#limit-rows input")) {
+      const n = parseNonNeg(input.value);
+      if (n != null && n > 0) limits[input.dataset.cat] = n;
+    }
+
+    store.monthlyBudget = v;
+    store.savingsGoal = goal;
+    store.cycleStartDay = start;
+    store.categoryBudgets = limits;
+    saveStore();
+    renderAll();
+
+    const note = $("#save-note");
+    note.hidden = false;
+    setTimeout(() => { note.hidden = true; }, 1800);
+  });
+
+  setupBackup();
+}
+
+/* ============ Backup (export / import / erase) ============ */
+function downloadBlob(content, type, filename) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function setupBackup() {
+  $("#btn-export").addEventListener("click", () => {
+    downloadBlob(JSON.stringify(store, null, 2), "application/json", `budget-backup-${todayKey()}.json`);
+  });
+
+  $("#btn-export-csv").addEventListener("click", () => {
+    const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const lines = ["date,amount,category,note"];
+    for (const p of sortedPurchases()) {
+      lines.push([p.date, p.amount.toFixed(2), catById(p.category).label, esc(p.note || "")].join(","));
+    }
+    downloadBlob(lines.join("\n"), "text/csv", `budget-${todayKey()}.csv`);
+  });
+
+  $("#btn-import").addEventListener("click", () => $("#in-import").click());
+  $("#in-import").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.purchases)) throw new Error("bad shape");
+        if (!confirm(`Replace your current data with this backup (${data.purchases.length} purchases)?`)) return;
+        store.monthlyBudget = typeof data.monthlyBudget === "number" ? data.monthlyBudget : null;
+        store.savingsGoal = typeof data.savingsGoal === "number" ? data.savingsGoal : 0;
+        store.cycleStartDay = typeof data.cycleStartDay === "number" ? data.cycleStartDay : 1;
+        store.categoryBudgets = data.categoryBudgets && typeof data.categoryBudgets === "object" ? data.categoryBudgets : {};
+        store.recurring = Array.isArray(data.recurring) ? data.recurring : [];
+        store.purchases = data.purchases.filter(
+          (p) => p && typeof p.amount === "number" && typeof p.date === "string"
+        );
+        saveStore();
+        renderSettings();
+        renderAll();
+      } catch (_) {
+        alert("That file isn't a valid budget backup.");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  $("#btn-erase").addEventListener("click", () => {
+    if (!confirm("Erase ALL data — purchases, budget, and settings? This cannot be undone.")) return;
+    if (!confirm("Really erase everything? Consider exporting a backup first.")) return;
+    localStorage.removeItem(STORE_KEY);
+    location.reload();
+  });
+}
+
 /* ============ Tooltip ============ */
 const tooltip = document.getElementById("tooltip");
 function showTooltip(valueText, labelText, ev) {
@@ -660,12 +1105,20 @@ function showTooltip(valueText, labelText, ev) {
 function hideTooltip() { tooltip.hidden = true; }
 
 /* ============ Navigation & controls ============ */
+function renderAll() {
+  renderHome(false);
+  renderInsights();
+  if (state.view === "history") renderHistory();
+}
+
 function switchView(view) {
   state.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + view));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === view));
   if (view === "home") renderHome(true);
+  if (view === "history") renderHistory();
   if (view === "insights") renderInsights();
+  if (view === "settings") renderSettings();
   if (view === "add") $("#in-amount").focus();
   window.scrollTo(0, 0);
 }
@@ -684,97 +1137,32 @@ function setupSeg(segId, key, onChange) {
   });
 }
 
-function parseNonNeg(raw) {
-  const s = String(raw).trim();
-  if (!s) return 0;
-  const n = parseFloat(s.replace(/[$,\s]/g, ""));
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
-}
-
-function setupBudgetDialog() {
-  const dialog = $("#budget-dialog");
-  $("#btn-budget").addEventListener("click", () => {
-    $("#in-budget").value = store.monthlyBudget != null ? String(store.monthlyBudget) : "";
-    $("#in-savings").value = store.savingsGoal > 0 ? String(store.savingsGoal) : "";
-    $("#in-cyclestart").value = String(cycleStartDay());
-    dialog.showModal();
-  });
-  $("#btn-budget-cancel").addEventListener("click", () => dialog.close("cancel"));
-  $("#budget-form").addEventListener("submit", (e) => {
-    const v = parseAmount($("#in-budget").value);
-    if (v == null) { e.preventDefault(); $("#in-budget").focus(); return; }
-    const goal = parseNonNeg($("#in-savings").value);
-    if (goal == null || goal >= v) { e.preventDefault(); $("#in-savings").select(); return; }
-    const startRaw = parseInt($("#in-cyclestart").value, 10);
-    const start = Number.isFinite(startRaw) ? Math.min(28, Math.max(1, startRaw)) : 1;
-    store.monthlyBudget = v;
-    store.savingsGoal = goal;
-    store.cycleStartDay = start;
-    saveStore();
-    renderHome();
-    renderInsights();
-  });
-  setupBackup(dialog);
-}
-
-/* ============ Backup (export / import) ============ */
-function setupBackup(dialog) {
-  $("#btn-export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(store, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `budget-backup-${todayKey()}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
-
-  $("#btn-import").addEventListener("click", () => $("#in-import").click());
-  $("#in-import").addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (!data || !Array.isArray(data.purchases)) throw new Error("bad shape");
-        if (!confirm(`Replace your current data with this backup (${data.purchases.length} purchases)?`)) return;
-        store.monthlyBudget = typeof data.monthlyBudget === "number" ? data.monthlyBudget : null;
-        store.savingsGoal = typeof data.savingsGoal === "number" ? data.savingsGoal : 0;
-        store.cycleStartDay = typeof data.cycleStartDay === "number" ? data.cycleStartDay : 1;
-        store.purchases = data.purchases.filter(
-          (p) => p && typeof p.amount === "number" && typeof p.date === "string"
-        );
-        saveStore();
-        renderHome();
-        renderInsights();
-        dialog.close("cancel");
-      } catch (_) {
-        alert("That file isn't a valid budget backup.");
-      }
-      e.target.value = "";
-    };
-    reader.readAsText(file);
-  });
-}
-
 /* ============ Init ============ */
+processRecurring();
+
 document.querySelector(".tabbar").addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
   if (!tab) return;
   if (tab.dataset.view === "add" && state.editingId) resetAddForm(); // + always starts a fresh entry
   switchView(tab.dataset.view);
 });
+$("#btn-budget").addEventListener("click", () => switchView("settings"));
+$("#btn-view-all").addEventListener("click", () => switchView("history"));
+$("#in-search").addEventListener("input", (e) => {
+  state.histQuery = e.target.value;
+  renderHistory();
+});
 setupSeg("#period-seg", "period", renderHome);
 setupSeg("#range-seg", "range", renderInsights);
 setupAddForm();
 renderCatGrid();
-setupBudgetDialog();
+setupSettings();
 renderHome(true);
 renderInsights();
 
-// first run: prompt for a budget
+// first run: take the user straight to Settings to set a budget
 if (store.monthlyBudget == null && store.purchases.length === 0) {
-  setTimeout(() => $("#budget-dialog").showModal(), 400);
+  switchView("settings");
 }
 
 // offline support when installed as a web app (https only; no-op elsewhere)
