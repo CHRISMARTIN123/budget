@@ -39,13 +39,13 @@
       <div class="meter" aria-hidden="true"><div class="meter-fill" id="meter-fill"></div></div>
     </div>
 
-    <div class="savings" id="savings-card" hidden>
-      <div class="savings-top">
-        <span class="savings-title">Savings this month</span>
-        <span class="savings-value" id="savings-value">$0</span>
+    <div class="cyclecard" id="cycle-card" hidden>
+      <div class="cyclecard-top">
+        <span class="cyclecard-title" id="cycle-title">Savings pace</span>
+        <span class="cyclecard-value"><span id="cycle-value">$0</span><em id="cycle-value-label">projected savings</em></span>
       </div>
-      <div class="meter" aria-hidden="true"><div class="meter-fill" id="savings-fill"></div></div>
-      <p class="savings-sub" id="savings-sub"></p>
+      <div class="chart-wrap" id="home-chart"></div>
+      <p class="cyclecard-sub" id="cycle-sub"></p>
     </div>
 
     <div class="recent">
@@ -98,7 +98,7 @@
     <div class="seg" role="tablist" aria-label="Insights range" id="range-seg">
       <button class="seg-btn is-active" data-range="7" role="tab" aria-selected="true">7 days</button>
       <button class="seg-btn" data-range="30" role="tab" aria-selected="false">30 days</button>
-      <button class="seg-btn" data-range="month" role="tab" aria-selected="false">This month</button>
+      <button class="seg-btn" data-range="month" role="tab" aria-selected="false">This cycle</button>
     </div>
 
     <div class="tiles">
@@ -151,7 +151,7 @@
 <dialog id="budget-dialog">
   <form method="dialog" id="budget-form">
     <h2 class="dialog-title">Budget &amp; savings</h2>
-    <p class="dialog-sub">Week and day balances are prorated from the monthly budget, after setting your savings aside.</p>
+    <p class="dialog-sub">Week and day balances are prorated from the budget, after your savings are set aside. Set the cycle start day to match your pay date.</p>
     <label class="field">
       <span class="field-label">Monthly budget</span>
       <div class="amount-wrap">
@@ -165,6 +165,10 @@
         <span class="amount-symbol">$</span>
         <input type="text" inputmode="decimal" id="in-savings" placeholder="0">
       </div>
+    </label>
+    <label class="field">
+      <span class="field-label">Cycle starts on day <em>(e.g. payday)</em></span>
+      <input type="number" inputmode="numeric" id="in-cyclestart" min="1" max="28" placeholder="1">
     </label>
     <div class="backup">
       <span class="field-label">Your data</span>
