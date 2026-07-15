@@ -23,11 +23,12 @@ function loadStore() {
       const data = JSON.parse(raw);
       if (data && Array.isArray(data.purchases)) {
         if (typeof data.savingsGoal !== "number") data.savingsGoal = 0;
+        if (typeof data.cycleStartDay !== "number") data.cycleStartDay = 1;
         return data;
       }
     }
   } catch (_) { /* corrupted store — start fresh */ }
-  return { monthlyBudget: null, savingsGoal: 0, purchases: [] };
+  return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, purchases: [] };
 }
 function saveStore() {
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
@@ -55,6 +56,21 @@ function startOfWeek(d) { // Monday
 }
 function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
 
+// The budget "cycle" is a month-length window starting on cycleStartDay (1–28),
+// so someone paid on the 25th can align it to their pay date.
+function cycleStartDay() {
+  const n = Math.round(store.cycleStartDay || 1);
+  return Math.min(28, Math.max(1, n));
+}
+function cycleRange(ref) {
+  const day = cycleStartDay();
+  let y = ref.getFullYear(), m = ref.getMonth();
+  if (ref.getDate() < day) m -= 1; // before this month's start → previous cycle
+  return { start: new Date(y, m, day), end: new Date(y, m + 1, day) };
+}
+function cycleLenDays(c) { return Math.round((c.end - c.start) / DAY_MS); }
+function midnight(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+
 /* ============ Money ============ */
 const fmtWhole = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const fmtCents = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
@@ -73,26 +89,32 @@ function spentBetween(from, to) { // [from, to) as Date, date-key comparison
 
 function periodInfo() {
   const now = new Date();
-  const dim = daysInMonth(now);
+  const today = midnight(now);
+  const cycle = cycleRange(now);
+  const cLen = cycleLenDays(cycle);
   // what's available to spend after the savings goal is set aside
   const spendable = store.monthlyBudget == null
     ? null
     : Math.max(0, store.monthlyBudget - (store.savingsGoal || 0));
+  const dailyRate = spendable == null ? null : spendable / cLen;
+
   if (state.period === "month") {
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);
-    const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    return { label: "Left this month", budget: spendable, spent: spentBetween(from, to), daysLeft: dim - now.getDate() + 1 };
+    const label = cycleStartDay() === 1 ? "Left this month" : "Left this cycle";
+    return {
+      label, budget: spendable, spent: spentBetween(cycle.start, cycle.end),
+      daysLeft: Math.round((cycle.end - today) / DAY_MS),
+    };
   }
   if (state.period === "week") {
     const from = startOfWeek(now);
     const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
-    const wBudget = spendable == null ? null : (spendable / dim) * 7;
-    const daysLeft = Math.round((to - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / DAY_MS);
-    return { label: "Left this week", budget: wBudget, spent: spentBetween(from, to), daysLeft };
+    return {
+      label: "Left this week", budget: dailyRate == null ? null : dailyRate * 7,
+      spent: spentBetween(from, to), daysLeft: Math.round((to - today) / DAY_MS),
+    };
   }
-  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
-  return { label: "Left today", budget: spendable == null ? null : spendable / dim, spent: spentBetween(from, to), daysLeft: 0 };
+  const to = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  return { label: "Left today", budget: dailyRate, spent: spentBetween(today, to), daysLeft: 0 };
 }
 
 /* ============ Home ============ */
@@ -123,41 +145,137 @@ function renderHome() {
   }
 
   $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Settings";
-  renderSavings();
+  renderCycleCard();
   renderRecent();
 }
 
-/* ============ Savings ============ */
-// Savings accrue day by day: everything not spent from the prorated monthly
-// budget counts toward the goal, so under-spending a day adds to savings and
-// over-spending eats into them.
-function renderSavings() {
-  const card = $("#savings-card");
-  const goal = store.savingsGoal || 0;
-  if (store.monthlyBudget == null || goal <= 0) { card.hidden = true; return; }
+/* ============ Cycle card + home chart ============ */
+// Cumulative spending across the current cycle, drawn against an even "pace"
+// line to the spending limit. Staying under the pace line means you're on
+// track to hit your savings goal; the headline projects where savings land if
+// the current spending rate holds.
+function renderCycleCard() {
+  const card = $("#cycle-card");
+  if (store.monthlyBudget == null) { card.hidden = true; return; }
   card.hidden = false;
 
+  const goal = store.savingsGoal || 0;
+  const budget = store.monthlyBudget;
+  const spendable = Math.max(0, budget - goal);
+
   const now = new Date();
-  const dim = daysInMonth(now);
-  const from = new Date(now.getFullYear(), now.getMonth(), 1);
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const spent = spentBetween(from, to);
+  const today = midnight(now);
+  const cycle = cycleRange(now);
+  const cLen = cycleLenDays(cycle);
+  const elapsed = Math.min(cLen, Math.max(1, Math.round((today - cycle.start) / DAY_MS) + 1));
 
-  const accrued = store.monthlyBudget * (now.getDate() / dim); // budget earned so far this month
-  const saved = accrued - spent;
-  const pace = goal * (now.getDate() / dim); // where savings should be today
-
-  $("#savings-value").textContent = money(saved, true);
-  $("#savings-fill").style.width = Math.max(0, Math.min(100, (saved / goal) * 100)).toFixed(1) + "%";
-
-  const sub = $("#savings-sub");
-  if (saved < 0) {
-    sub.textContent = `Over budget by ${money(-saved, true)} — spending is eating into savings.`;
-  } else {
-    const pct = Math.round((saved / goal) * 100);
-    const paceText = saved >= pace ? "on pace" : "behind pace";
-    sub.textContent = `${pct}% of your ${money(goal)} goal · ${paceText}`;
+  // per-day and cumulative spend for the cycle
+  const dayTotals = new Array(cLen).fill(0);
+  for (const p of store.purchases) {
+    const idx = Math.round((parseKey(p.date) - cycle.start) / DAY_MS);
+    if (idx >= 0 && idx < cLen) dayTotals[idx] += p.amount;
   }
+  const cum = [0];
+  for (let i = 0; i < cLen; i++) cum.push(cum[i] + dayTotals[i]);
+  const spent = cum[elapsed];
+
+  const frac = elapsed / cLen;
+  const projectedSpend = spent / frac;
+  const projectedSavings = budget - projectedSpend;
+  const onTrack = spent <= spendable * frac + 0.001;
+
+  const valueEl = $("#cycle-value");
+  const valueLabel = $("#cycle-value-label");
+  const sub = $("#cycle-sub");
+  const title = $("#cycle-title");
+
+  if (goal > 0) {
+    title.textContent = "Savings pace";
+    valueEl.textContent = money(Math.round(projectedSavings));
+    valueLabel.textContent = "projected savings";
+    if (projectedSavings < 0) {
+      sub.textContent = `Projected to overspend by ${money(-projectedSavings)} — cut back to save.`;
+    } else {
+      const pct = Math.round((projectedSavings / goal) * 100);
+      sub.textContent = `${pct}% of your ${money(goal)} goal · ${onTrack ? "on track" : "behind pace"}`;
+    }
+  } else {
+    title.textContent = cycleStartDay() === 1 ? "This month" : "This cycle";
+    valueEl.textContent = money(spent, true);
+    valueLabel.textContent = "spent so far";
+    sub.textContent = `${money(spent)} of ${money(spendable)} · ${onTrack ? "on track" : "over pace"}`;
+  }
+
+  renderHomeChart({ cycle, cLen, elapsed, cum, spendable, budget });
+}
+
+function renderHomeChart({ cycle, cLen, elapsed, cum, spendable, budget }) {
+  const wrap = $("#home-chart");
+  wrap.textContent = "";
+
+  const W = 400, H = 150;
+  const pad = { top: 14, right: 12, bottom: 20, left: 40 };
+  const iw = W - pad.left - pad.right;
+  const ih = H - pad.top - pad.bottom;
+
+  const maxCum = Math.max(...cum.slice(0, elapsed + 1), 0);
+  const yTop = niceMax(Math.max(spendable, budget, maxCum));
+  const X = (i) => pad.left + (iw * i) / cLen;
+  const Y = (v) => pad.top + ih - (ih * v) / yTop;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Cumulative spending against savings pace this cycle" });
+
+  // y ticks: 0 and top
+  for (const t of [0, 1]) {
+    const y = pad.top + ih - ih * t;
+    svg.append(svgEl("line", { x1: pad.left, x2: W - pad.right, y1: y, y2: y, class: "chart-grid" }));
+    const tick = svgEl("text", { x: pad.left - 7, y: y + 3.5, "text-anchor": "end", class: "chart-tick" });
+    tick.textContent = "$" + Math.round(yTop * t).toLocaleString("en-US");
+    svg.append(tick);
+  }
+
+  // pace line: even spending that lands exactly on the limit at cycle end
+  svg.append(svgEl("line", { x1: X(0), y1: Y(0), x2: X(cLen), y2: Y(spendable), class: "chart-ref" }));
+  const paceLbl = svgEl("text", { x: X(cLen), y: Y(spendable) - 5, "text-anchor": "end", class: "chart-reflabel" });
+  paceLbl.textContent = "limit " + money(spendable);
+  svg.append(paceLbl);
+
+  // cumulative spend area + line up to today
+  const pts = [];
+  for (let i = 0; i <= elapsed; i++) pts.push([X(i), Y(cum[i])]);
+  const lineD = pts.map((p, i) => (i ? "L" : "M") + p[0] + "," + p[1]).join(" ");
+  const areaD = `M${X(0)},${Y(0)} ` + pts.map((p) => `L${p[0]},${p[1]}`).join(" ") + ` L${X(elapsed)},${Y(0)} Z`;
+  svg.append(svgEl("path", { d: areaD, class: "chart-area" }));
+  svg.append(svgEl("path", { d: lineD, class: "chart-line" }));
+  svg.append(svgEl("circle", { cx: X(elapsed), cy: Y(cum[elapsed]), r: 4, class: "chart-dot" }));
+
+  // x labels: cycle start and end dates
+  const startLbl = svgEl("text", { x: X(0), y: H - 6, "text-anchor": "start", class: "chart-tick" });
+  startLbl.textContent = cycle.start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const endDate = new Date(cycle.end.getFullYear(), cycle.end.getMonth(), cycle.end.getDate() - 1);
+  const endLbl = svgEl("text", { x: X(cLen), y: H - 6, "text-anchor": "end", class: "chart-tick" });
+  endLbl.textContent = endDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  svg.append(startLbl, endLbl);
+
+  // per-day hit targets: tooltip with date, spent-to-date, and pace target
+  for (let i = 1; i <= elapsed; i++) {
+    const bandX = X(i) - iw / cLen / 2;
+    const hit = svgEl("rect", { x: bandX, y: pad.top, width: iw / cLen, height: ih, class: "chart-hit", tabindex: "0" });
+    const dayDate = new Date(cycle.start.getFullYear(), cycle.start.getMonth(), cycle.start.getDate() + i - 1);
+    const paceTarget = spendable * (i / cLen);
+    const show = (ev) => showTooltip(
+      money(cum[i], true),
+      `${dayDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · pace ${money(paceTarget)}`,
+      ev
+    );
+    hit.addEventListener("pointermove", show);
+    hit.addEventListener("pointerleave", hideTooltip);
+    hit.addEventListener("focus", () => show({ target: hit }));
+    hit.addEventListener("blur", hideTooltip);
+    svg.append(hit);
+  }
+
+  wrap.append(svg);
 }
 
 function friendlyDate(key) {
@@ -298,9 +416,9 @@ function setupAddForm() {
 /* ============ Insights ============ */
 function rangeInfo() {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = midnight(now);
   if (state.range === "month") {
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const from = cycleRange(now).start;
     return { from, days: Math.round((today - from) / DAY_MS) + 1 };
   }
   const days = Number(state.range);
@@ -544,6 +662,7 @@ function setupBudgetDialog() {
   $("#btn-budget").addEventListener("click", () => {
     $("#in-budget").value = store.monthlyBudget != null ? String(store.monthlyBudget) : "";
     $("#in-savings").value = store.savingsGoal > 0 ? String(store.savingsGoal) : "";
+    $("#in-cyclestart").value = String(cycleStartDay());
     dialog.showModal();
   });
   $("#btn-budget-cancel").addEventListener("click", () => dialog.close("cancel"));
@@ -552,10 +671,14 @@ function setupBudgetDialog() {
     if (v == null) { e.preventDefault(); $("#in-budget").focus(); return; }
     const goal = parseNonNeg($("#in-savings").value);
     if (goal == null || goal >= v) { e.preventDefault(); $("#in-savings").select(); return; }
+    const startRaw = parseInt($("#in-cyclestart").value, 10);
+    const start = Number.isFinite(startRaw) ? Math.min(28, Math.max(1, startRaw)) : 1;
     store.monthlyBudget = v;
     store.savingsGoal = goal;
+    store.cycleStartDay = start;
     saveStore();
     renderHome();
+    renderInsights();
   });
   setupBackup(dialog);
 }
@@ -583,6 +706,7 @@ function setupBackup(dialog) {
         if (!confirm(`Replace your current data with this backup (${data.purchases.length} purchases)?`)) return;
         store.monthlyBudget = typeof data.monthlyBudget === "number" ? data.monthlyBudget : null;
         store.savingsGoal = typeof data.savingsGoal === "number" ? data.savingsGoal : 0;
+        store.cycleStartDay = typeof data.cycleStartDay === "number" ? data.cycleStartDay : 1;
         store.purchases = data.purchases.filter(
           (p) => p && typeof p.amount === "number" && typeof p.date === "string"
         );

@@ -117,37 +117,59 @@ body {
   transition: width 0.35s ease;
 }
 
-/* ============ Savings card ============ */
-.savings {
+/* ============ Cycle card (home chart) ============ */
+.cyclecard {
   border: 1px solid var(--hairline);
   border-radius: 14px;
-  padding: 16px;
+  padding: 16px 16px 14px;
   margin-bottom: 32px;
 }
-.savings-top {
+.cyclecard-top {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
-.savings-title {
+.cyclecard-title {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.savings-value {
-  font-size: 20px;
+.cyclecard-value {
+  text-align: right;
+  white-space: nowrap;
+}
+.cyclecard-value #cycle-value {
+  font-size: 22px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
-.savings .meter { margin-top: 0; }
-.savings-sub {
-  margin-top: 10px;
+.cyclecard-value em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 1px;
+}
+.cyclecard-sub {
+  margin-top: 12px;
   font-size: 13px;
   color: var(--text-2);
 }
+
+/* home chart marks */
+.chart-area { fill: var(--ink); opacity: 0.08; }
+.chart-line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-dot { fill: var(--ink); stroke: var(--bg); stroke-width: 2; }
+.chart-ref { stroke: var(--text-3); stroke-width: 1.5; fill: none; }
+.chart-reflabel { font-size: 10px; fill: var(--text-3); font-weight: 500; }
+.chart-today { stroke: var(--hairline); stroke-width: 1; }
 
 /* ============ Purchase list ============ */
 .section-title {
@@ -226,7 +248,7 @@ body {
 }
 .field-label em { font-style: normal; text-transform: none; letter-spacing: 0; color: var(--text-3); }
 
-input[type="text"], input[type="date"] {
+input[type="text"], input[type="date"], input[type="number"] {
   width: 100%;
   padding: 13px 14px;
   border: 1px solid var(--hairline);
