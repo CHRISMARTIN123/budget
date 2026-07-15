@@ -1,0 +1,1 @@
+Vendored from https://github.com/Nutlope/hallmark (MIT). Invoke in a Claude Code session with: hallmark · hallmark audit <target> · hallmark redesign <target> · hallmark study <url>.

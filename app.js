@@ -120,21 +120,39 @@ function periodInfo() {
 /* ============ Home ============ */
 const $ = (sel) => document.querySelector(sel);
 
-function renderHome() {
+// Stat-led reveal: tick the hero figure from 0 to target (~480ms), whole
+// dollars during flight, exact value on the final frame. Reduced-motion safe.
+function animateCount(el, to) {
+  if (!Number.isFinite(to) || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    el.textContent = money(to);
+    return;
+  }
+  const dur = 480, t0 = performance.now();
+  const step = (t) => {
+    const p = Math.min(1, (t - t0) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    if (p < 1) { el.textContent = money(Math.round(to * eased)); requestAnimationFrame(step); }
+    else el.textContent = money(to);
+  };
+  requestAnimationFrame(step);
+}
+
+function renderHome(animate) {
   const info = periodInfo();
   $("#hero-label").textContent = info.label;
 
   const heroValue = $("#hero-value");
   const heroSub = $("#hero-sub");
   const meterFill = $("#meter-fill");
+  let heroTarget;
 
   if (info.budget == null) {
-    heroValue.textContent = money(-info.spent || 0);
+    heroTarget = -info.spent || 0;
     heroSub.textContent = "Set a monthly budget to track what's left.";
     meterFill.style.width = "0%";
   } else {
     const left = info.budget - info.spent;
-    heroValue.textContent = money(left);
+    heroTarget = left;
     const parts = [`of ${money(info.budget)}`];
     if (state.period === "month" && (store.savingsGoal || 0) > 0) parts.push(`saving ${money(store.savingsGoal)}`);
     if (state.period !== "day") parts.push(`${info.daysLeft} day${info.daysLeft === 1 ? "" : "s"} left`);
@@ -143,6 +161,9 @@ function renderHome() {
     const pct = info.budget > 0 ? Math.min(100, (info.spent / info.budget) * 100) : 100;
     meterFill.style.width = pct.toFixed(1) + "%";
   }
+
+  if (animate) animateCount(heroValue, heroTarget);
+  else heroValue.textContent = money(heroTarget);
 
   $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Settings";
   renderCycleCard();
@@ -630,7 +651,7 @@ function switchView(view) {
   state.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + view));
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === view));
-  if (view === "home") renderHome();
+  if (view === "home") renderHome(true);
   if (view === "insights") renderInsights();
   if (view === "add") $("#in-amount").focus();
   window.scrollTo(0, 0);
@@ -735,7 +756,7 @@ setupSeg("#range-seg", "range", renderInsights);
 setupAddForm();
 renderCatGrid();
 setupBudgetDialog();
-renderHome();
+renderHome(true);
 renderInsights();
 
 // first run: prompt for a budget

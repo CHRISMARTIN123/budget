@@ -39,6 +39,16 @@ screen). Dark mode follows your system setting.
   spending-by-category breakdown. Filter by last 7 days, 30 days, or this
   month.
 
+## Design
+
+Monochrome, "made not generated" — a stat-led layout where the balance is the
+hero figure, set in **Fraunces** (display serif) over **Geist** (grotesk body),
+with tabular figures, hairline dividers, and full interactive states. Fonts are
+self-hosted in `fonts/` and cached by the service worker for offline use. The
+visual system was built with the vendored [Hallmark](https://github.com/Nutlope/hallmark)
+anti-AI-slop design skill (`.claude/skills/hallmark/`, MIT) — a future Claude
+Code session on this repo can run `hallmark audit .` or `hallmark redesign .`.
+
 ## Categories
 
 Food · Transport · Shopping · Fitness · Fun · Bills · Health · Other
