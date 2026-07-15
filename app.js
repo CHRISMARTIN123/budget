@@ -21,17 +21,20 @@ function loadStore() {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
-      if (data && Array.isArray(data.purchases)) return data;
+      if (data && Array.isArray(data.purchases)) {
+        if (typeof data.savingsGoal !== "number") data.savingsGoal = 0;
+        return data;
+      }
     }
   } catch (_) { /* corrupted store — start fresh */ }
-  return { monthlyBudget: null, purchases: [] };
+  return { monthlyBudget: null, savingsGoal: 0, purchases: [] };
 }
 function saveStore() {
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
 }
 
 const store = loadStore();
-const state = { period: "month", range: "7", view: "home", selectedCat: "food" };
+const state = { period: "month", range: "7", view: "home", selectedCat: "food", editingId: null };
 
 /* ============ Date helpers (all local time) ============ */
 const DAY_MS = 86400000;
@@ -71,22 +74,25 @@ function spentBetween(from, to) { // [from, to) as Date, date-key comparison
 function periodInfo() {
   const now = new Date();
   const dim = daysInMonth(now);
-  const budget = store.monthlyBudget;
+  // what's available to spend after the savings goal is set aside
+  const spendable = store.monthlyBudget == null
+    ? null
+    : Math.max(0, store.monthlyBudget - (store.savingsGoal || 0));
   if (state.period === "month") {
     const from = new Date(now.getFullYear(), now.getMonth(), 1);
     const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    return { label: "Left this month", budget, spent: spentBetween(from, to), daysLeft: dim - now.getDate() + 1 };
+    return { label: "Left this month", budget: spendable, spent: spentBetween(from, to), daysLeft: dim - now.getDate() + 1 };
   }
   if (state.period === "week") {
     const from = startOfWeek(now);
     const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
-    const wBudget = budget == null ? null : (budget / dim) * 7;
+    const wBudget = spendable == null ? null : (spendable / dim) * 7;
     const daysLeft = Math.round((to - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / DAY_MS);
     return { label: "Left this week", budget: wBudget, spent: spentBetween(from, to), daysLeft };
   }
   const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 1);
-  return { label: "Left today", budget: budget == null ? null : budget / dim, spent: spentBetween(from, to), daysLeft: 0 };
+  return { label: "Left today", budget: spendable == null ? null : spendable / dim, spent: spentBetween(from, to), daysLeft: 0 };
 }
 
 /* ============ Home ============ */
@@ -108,6 +114,7 @@ function renderHome() {
     const left = info.budget - info.spent;
     heroValue.textContent = money(left);
     const parts = [`of ${money(info.budget)}`];
+    if (state.period === "month" && (store.savingsGoal || 0) > 0) parts.push(`saving ${money(store.savingsGoal)}`);
     if (state.period !== "day") parts.push(`${info.daysLeft} day${info.daysLeft === 1 ? "" : "s"} left`);
     if (left < 0) parts.push("over budget");
     heroSub.textContent = parts.join(" · ");
@@ -115,8 +122,42 @@ function renderHome() {
     meterFill.style.width = pct.toFixed(1) + "%";
   }
 
-  $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Edit budget";
+  $("#btn-budget").textContent = store.monthlyBudget == null ? "Set budget" : "Settings";
+  renderSavings();
   renderRecent();
+}
+
+/* ============ Savings ============ */
+// Savings accrue day by day: everything not spent from the prorated monthly
+// budget counts toward the goal, so under-spending a day adds to savings and
+// over-spending eats into them.
+function renderSavings() {
+  const card = $("#savings-card");
+  const goal = store.savingsGoal || 0;
+  if (store.monthlyBudget == null || goal <= 0) { card.hidden = true; return; }
+  card.hidden = false;
+
+  const now = new Date();
+  const dim = daysInMonth(now);
+  const from = new Date(now.getFullYear(), now.getMonth(), 1);
+  const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const spent = spentBetween(from, to);
+
+  const accrued = store.monthlyBudget * (now.getDate() / dim); // budget earned so far this month
+  const saved = accrued - spent;
+  const pace = goal * (now.getDate() / dim); // where savings should be today
+
+  $("#savings-value").textContent = money(saved, true);
+  $("#savings-fill").style.width = Math.max(0, Math.min(100, (saved / goal) * 100)).toFixed(1) + "%";
+
+  const sub = $("#savings-sub");
+  if (saved < 0) {
+    sub.textContent = `Over budget by ${money(-saved, true)} — spending is eating into savings.`;
+  } else {
+    const pct = Math.round((saved / goal) * 100);
+    const paceText = saved >= pace ? "on pace" : "behind pace";
+    sub.textContent = `${pct}% of your ${money(goal)} goal · ${paceText}`;
+  }
 }
 
 function friendlyDate(key) {
@@ -153,6 +194,7 @@ function renderRecent() {
     meta.className = "txn-meta";
     meta.textContent = `${cat.label} · ${friendlyDate(p.date)}`;
     main.append(title, meta);
+    main.addEventListener("click", () => startEdit(p));
 
     const amount = document.createElement("span");
     amount.className = "txn-amount";
@@ -203,6 +245,26 @@ function parseAmount(raw) {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 }
 
+function resetAddForm() {
+  state.editingId = null;
+  $("#add-form").reset();
+  $("#in-date").value = todayKey();
+  $("#add-title").textContent = "Add purchase";
+  $("#btn-save-purchase").textContent = "Save purchase";
+}
+
+function startEdit(p) {
+  state.editingId = p.id;
+  state.selectedCat = p.category;
+  renderCatGrid();
+  $("#in-amount").value = p.amount.toFixed(2);
+  $("#in-note").value = p.note || "";
+  $("#in-date").value = p.date;
+  $("#add-title").textContent = "Edit purchase";
+  $("#btn-save-purchase").textContent = "Save changes";
+  switchView("add");
+}
+
 function setupAddForm() {
   const form = $("#add-form");
   $("#in-date").value = todayKey();
@@ -212,19 +274,23 @@ function setupAddForm() {
     const amount = parseAmount($("#in-amount").value);
     if (amount == null) { $("#in-amount").focus(); return; }
     const date = $("#in-date").value || todayKey();
+    const note = $("#in-note").value.trim();
 
-    store.purchases.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      amount,
-      category: state.selectedCat,
-      note: $("#in-note").value.trim(),
-      date,
-      createdAt: Date.now(),
-    });
+    const editing = state.editingId && store.purchases.find((p) => p.id === state.editingId);
+    if (editing) {
+      Object.assign(editing, { amount, category: state.selectedCat, note, date });
+    } else {
+      store.purchases.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        amount,
+        category: state.selectedCat,
+        note,
+        date,
+        createdAt: Date.now(),
+      });
+    }
     saveStore();
-
-    form.reset();
-    $("#in-date").value = todayKey();
+    resetAddForm();
     switchView("home");
   });
 }
@@ -466,26 +532,79 @@ function setupSeg(segId, key, onChange) {
   });
 }
 
+function parseNonNeg(raw) {
+  const s = String(raw).trim();
+  if (!s) return 0;
+  const n = parseFloat(s.replace(/[$,\s]/g, ""));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+
 function setupBudgetDialog() {
   const dialog = $("#budget-dialog");
   $("#btn-budget").addEventListener("click", () => {
     $("#in-budget").value = store.monthlyBudget != null ? String(store.monthlyBudget) : "";
+    $("#in-savings").value = store.savingsGoal > 0 ? String(store.savingsGoal) : "";
     dialog.showModal();
   });
   $("#btn-budget-cancel").addEventListener("click", () => dialog.close("cancel"));
   $("#budget-form").addEventListener("submit", (e) => {
     const v = parseAmount($("#in-budget").value);
     if (v == null) { e.preventDefault(); $("#in-budget").focus(); return; }
+    const goal = parseNonNeg($("#in-savings").value);
+    if (goal == null || goal >= v) { e.preventDefault(); $("#in-savings").select(); return; }
     store.monthlyBudget = v;
+    store.savingsGoal = goal;
     saveStore();
     renderHome();
+  });
+  setupBackup(dialog);
+}
+
+/* ============ Backup (export / import) ============ */
+function setupBackup(dialog) {
+  $("#btn-export").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(store, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `budget-backup-${todayKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  $("#btn-import").addEventListener("click", () => $("#in-import").click());
+  $("#in-import").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.purchases)) throw new Error("bad shape");
+        if (!confirm(`Replace your current data with this backup (${data.purchases.length} purchases)?`)) return;
+        store.monthlyBudget = typeof data.monthlyBudget === "number" ? data.monthlyBudget : null;
+        store.savingsGoal = typeof data.savingsGoal === "number" ? data.savingsGoal : 0;
+        store.purchases = data.purchases.filter(
+          (p) => p && typeof p.amount === "number" && typeof p.date === "string"
+        );
+        saveStore();
+        renderHome();
+        renderInsights();
+        dialog.close("cancel");
+      } catch (_) {
+        alert("That file isn't a valid budget backup.");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
   });
 }
 
 /* ============ Init ============ */
 document.querySelector(".tabbar").addEventListener("click", (e) => {
   const tab = e.target.closest(".tab");
-  if (tab) switchView(tab.dataset.view);
+  if (!tab) return;
+  if (tab.dataset.view === "add" && state.editingId) resetAddForm(); // + always starts a fresh entry
+  switchView(tab.dataset.view);
 });
 setupSeg("#period-seg", "period", renderHome);
 setupSeg("#range-seg", "range", renderInsights);
