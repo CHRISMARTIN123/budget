@@ -499,3 +499,8 @@ renderInsights();
 if (store.monthlyBudget == null && store.purchases.length === 0) {
   setTimeout(() => $("#budget-dialog").showModal(), 400);
 }
+
+// offline support when installed as a web app (https only; no-op elsewhere)
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
