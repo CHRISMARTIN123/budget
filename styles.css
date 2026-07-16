@@ -764,3 +764,12 @@ dialog .amount-wrap input { font-size: var(--text-lg); padding: 10px var(--space
 /* five tabs now — distribute evenly instead of a fixed gap (overflowed at 320px) */
 .tabbar { gap: 0; justify-content: space-evenly; }
 .tab { min-width: 52px; }
+
+/* ============ Rollover control (Settings) ============ */
+#rollover-seg { margin-bottom: 0; }
+.field-hint {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  margin-top: var(--space-sm);
+  line-height: 1.5;
+}
