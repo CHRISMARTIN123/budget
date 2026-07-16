@@ -741,6 +741,13 @@ dialog .amount-wrap input { font-size: var(--text-lg); padding: 10px var(--space
   color: var(--ink-2);
   text-align: center;
 }
+.save-note:empty { display: none; }
+.field-error {
+  margin-top: var(--space-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+}
 .empty.small { padding: var(--space-md) 0; text-align: left; }
 .danger-btn {
   margin-top: var(--space-md);

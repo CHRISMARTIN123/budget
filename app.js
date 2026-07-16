@@ -16,17 +16,67 @@ const catById = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[CATEGO
 /* ============ Storage ============ */
 const STORE_KEY = "budget.v1";
 
+// Anything read from localStorage or an imported backup is untrusted: a
+// hand-edited or corrupted file must never crash the app (a recurring rule
+// with a bad `lastPosted` used to break boot) or poison the math with
+// negative/Infinity amounts. Sanitize on every entry point.
+const DATE_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+function validAmount(n) { return typeof n === "number" && Number.isFinite(n) && n > 0; }
+function cents(n) { return Math.round(n * 100) / 100; }
+
+function sanitizePurchases(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((p) => p && validAmount(p.amount) && typeof p.date === "string" && DATE_KEY_RE.test(p.date))
+    .map((p) => {
+      const out = {
+        id: typeof p.id === "string" ? p.id : uid(),
+        amount: cents(p.amount),
+        category: catById(p.category).id,
+        note: typeof p.note === "string" ? p.note.slice(0, 60) : "",
+        date: p.date,
+        createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
+      };
+      if (p.recurringId != null) out.recurringId = String(p.recurringId);
+      return out;
+    });
+}
+function sanitizeRecurring(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((r) => r && validAmount(r.amount)
+      && typeof r.lastPosted === "string" && DATE_KEY_RE.test(r.lastPosted)
+      && Number.isInteger(r.day) && r.day >= 1 && r.day <= 31)
+    .map((r) => ({
+      id: typeof r.id === "string" ? r.id : uid(),
+      amount: cents(r.amount),
+      category: catById(r.category).id,
+      note: typeof r.note === "string" ? r.note.slice(0, 60) : "",
+      day: r.day,
+      lastPosted: r.lastPosted,
+    }));
+}
+function sanitizeLimits(obj) {
+  const out = {};
+  if (obj && typeof obj === "object") {
+    for (const c of CATEGORIES) if (validAmount(obj[c.id])) out[c.id] = cents(obj[c.id]);
+  }
+  return out;
+}
+
 function loadStore() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
       if (data && Array.isArray(data.purchases)) {
-        if (typeof data.savingsGoal !== "number") data.savingsGoal = 0;
+        if (!validAmount(data.monthlyBudget)) data.monthlyBudget = null;
+        if (typeof data.savingsGoal !== "number" || !Number.isFinite(data.savingsGoal) || data.savingsGoal < 0) data.savingsGoal = 0;
         if (typeof data.cycleStartDay !== "number") data.cycleStartDay = 1;
-        if (!data.categoryBudgets || typeof data.categoryBudgets !== "object") data.categoryBudgets = {};
-        if (!Array.isArray(data.recurring)) data.recurring = [];
         if (data.rolloverMode !== "spread" && data.rolloverMode !== "save") data.rolloverMode = "save";
+        data.categoryBudgets = sanitizeLimits(data.categoryBudgets);
+        data.recurring = sanitizeRecurring(data.recurring);
+        data.purchases = sanitizePurchases(data.purchases);
         return data;
       }
     }
@@ -34,13 +84,18 @@ function loadStore() {
   return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, categoryBudgets: {}, recurring: [], rolloverMode: "save", purchases: [] };
 }
 function saveStore() {
-  localStorage.setItem(STORE_KEY, JSON.stringify(store));
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(store));
+  } catch (_) {
+    alert("Couldn't save — your browser storage may be full. Export a backup from Settings to be safe.");
+  }
 }
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
 const store = loadStore();
+saveStore(); // persist the sanitized shape so a corrupted store is healed on disk, not just in memory
 const state = { period: "month", range: "7", view: "home", selectedCat: "food", editingId: null, histCat: "all", histQuery: "" };
 
 /* ============ Date helpers (all local time) ============ */
@@ -466,6 +521,8 @@ function renderHistChips() {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "chip" + (state.histCat === id ? " is-active" : "");
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", String(state.histCat === id));
     b.textContent = label;
     b.addEventListener("click", () => { state.histCat = id; renderHistory(); });
     return b;
@@ -493,7 +550,10 @@ function renderHistory() {
     : "";
   $("#hist-empty").hidden = items.length > 0;
 
-  // group by date
+  // group by date (day totals precomputed in one pass — items can be hundreds long)
+  const dayTotals = new Map();
+  for (const p of items) dayTotals.set(p.date, (dayTotals.get(p.date) || 0) + p.amount);
+
   let currentKey = null, ul = null;
   const CAP = 300;
   for (const p of items.slice(0, CAP)) {
@@ -505,7 +565,7 @@ function renderHistory() {
       label.textContent = friendlyDate(p.date) + " · " + parseKey(p.date).toLocaleDateString("en-US", { weekday: "short" });
       const dayTotal = document.createElement("span");
       dayTotal.className = "hist-head-total";
-      dayTotal.textContent = money(items.filter((x) => x.date === p.date).reduce((s, x) => s + x.amount, 0), true);
+      dayTotal.textContent = money(dayTotals.get(p.date), true);
       head.append(label, dayTotal);
       ul = document.createElement("ul");
       ul.className = "txn-list";
@@ -548,6 +608,22 @@ function parseAmount(raw) {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 }
 
+// Inline field errors: visible text linked to the input with aria-describedby
+// and aria-invalid so screen readers announce them, not just sighted users.
+function setFieldError(input, errEl, msg) {
+  if (msg) {
+    errEl.textContent = msg;
+    errEl.hidden = false;
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", errEl.id);
+  } else {
+    errEl.hidden = true;
+    errEl.textContent = "";
+    input.removeAttribute("aria-invalid");
+    input.removeAttribute("aria-describedby");
+  }
+}
+
 function resetAddForm() {
   state.editingId = null;
   $("#add-form").reset();
@@ -574,11 +650,17 @@ function startEdit(p) {
 function setupAddForm() {
   const form = $("#add-form");
   $("#in-date").value = todayKey();
+  $("#in-amount").addEventListener("input", () => setFieldError($("#in-amount"), $("#amount-error"), null));
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const amount = parseAmount($("#in-amount").value);
-    if (amount == null) { $("#in-amount").focus(); return; }
+    if (amount == null) {
+      setFieldError($("#in-amount"), $("#amount-error"), "Enter an amount greater than zero.");
+      $("#in-amount").focus();
+      return;
+    }
+    setFieldError($("#in-amount"), $("#amount-error"), null);
     const date = $("#in-date").value || todayKey();
     const note = $("#in-note").value.trim();
 
@@ -1046,12 +1128,26 @@ function setupSettings() {
     if (btn) updateRolloverUI(btn.dataset.rollover);
   });
 
+  $("#in-budget").addEventListener("input", () => setFieldError($("#in-budget"), $("#budget-error"), null));
+  $("#in-savings").addEventListener("input", () => setFieldError($("#in-savings"), $("#savings-error"), null));
+
   $("#settings-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const v = parseAmount($("#in-budget").value);
-    if (v == null) { $("#in-budget").focus(); return; }
+    if (v == null) {
+      setFieldError($("#in-budget"), $("#budget-error"), "Enter a monthly budget greater than zero.");
+      $("#in-budget").focus();
+      return;
+    }
+    setFieldError($("#in-budget"), $("#budget-error"), null);
     const goal = parseNonNeg($("#in-savings").value);
-    if (goal == null || goal >= v) { $("#in-savings").select(); return; }
+    if (goal == null || goal >= v) {
+      setFieldError($("#in-savings"), $("#savings-error"),
+        goal == null ? "Enter a savings goal of zero or more." : "Savings goal must be less than the monthly budget.");
+      $("#in-savings").select();
+      return;
+    }
+    setFieldError($("#in-savings"), $("#savings-error"), null);
     const startRaw = parseInt($("#in-cyclestart").value, 10);
     const start = Number.isFinite(startRaw) ? Math.min(28, Math.max(1, startRaw)) : 1;
     const activeRoll = $("#rollover-seg .seg-btn.is-active");
@@ -1072,8 +1168,8 @@ function setupSettings() {
     renderAll();
 
     const note = $("#save-note");
-    note.hidden = false;
-    setTimeout(() => { note.hidden = true; }, 1800);
+    note.textContent = "Saved.";
+    setTimeout(() => { note.textContent = ""; }, 1800);
   });
 
   setupBackup();
@@ -1113,15 +1209,13 @@ function setupBackup() {
         const data = JSON.parse(reader.result);
         if (!data || !Array.isArray(data.purchases)) throw new Error("bad shape");
         if (!confirm(`Replace your current data with this backup (${data.purchases.length} purchases)?`)) return;
-        store.monthlyBudget = typeof data.monthlyBudget === "number" ? data.monthlyBudget : null;
-        store.savingsGoal = typeof data.savingsGoal === "number" ? data.savingsGoal : 0;
-        store.cycleStartDay = typeof data.cycleStartDay === "number" ? data.cycleStartDay : 1;
-        store.categoryBudgets = data.categoryBudgets && typeof data.categoryBudgets === "object" ? data.categoryBudgets : {};
-        store.recurring = Array.isArray(data.recurring) ? data.recurring : [];
+        store.monthlyBudget = validAmount(data.monthlyBudget) ? cents(data.monthlyBudget) : null;
+        store.savingsGoal = typeof data.savingsGoal === "number" && Number.isFinite(data.savingsGoal) && data.savingsGoal >= 0 ? cents(data.savingsGoal) : 0;
+        store.cycleStartDay = typeof data.cycleStartDay === "number" ? Math.min(28, Math.max(1, Math.round(data.cycleStartDay))) : 1;
+        store.categoryBudgets = sanitizeLimits(data.categoryBudgets);
+        store.recurring = sanitizeRecurring(data.recurring);
         store.rolloverMode = data.rolloverMode === "spread" ? "spread" : "save";
-        store.purchases = data.purchases.filter(
-          (p) => p && typeof p.amount === "number" && typeof p.date === "string"
-        );
+        store.purchases = sanitizePurchases(data.purchases);
         saveStore();
         renderSettings();
         renderAll();
@@ -1166,7 +1260,12 @@ function renderAll() {
 function switchView(view) {
   state.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + view));
-  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === view));
+  document.querySelectorAll(".tab").forEach((t) => {
+    const active = t.dataset.view === view;
+    t.classList.toggle("is-active", active);
+    if (active) t.setAttribute("aria-current", "page");
+    else t.removeAttribute("aria-current");
+  });
   if (view === "home") renderHome(true);
   if (view === "history") renderHistory();
   if (view === "insights") renderInsights();
@@ -1200,9 +1299,15 @@ document.querySelector(".tabbar").addEventListener("click", (e) => {
 });
 $("#btn-budget").addEventListener("click", () => switchView("settings"));
 $("#btn-view-all").addEventListener("click", () => switchView("history"));
+// Debounced so a fast typist doesn't rebuild the (up to 300-row) history list
+// on every keystroke — only after a 150ms pause.
+let searchTimer = null;
 $("#in-search").addEventListener("input", (e) => {
-  state.histQuery = e.target.value;
-  renderHistory();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.histQuery = e.target.value;
+    renderHistory();
+  }, 150);
 });
 setupSeg("#period-seg", "period", renderHome);
 setupSeg("#range-seg", "range", renderInsights);

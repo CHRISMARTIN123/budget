@@ -64,7 +64,7 @@
       <span class="topbar-note" id="hist-summary"></span>
     </header>
 
-    <input type="text" id="in-search" class="search-input" placeholder="Search notes or categories" autocomplete="off">
+    <input type="text" id="in-search" class="search-input" placeholder="Search notes or categories" aria-label="Search notes or categories" autocomplete="off">
 
     <div class="chip-row" id="hist-chips" role="tablist" aria-label="Filter by category"></div>
 
@@ -78,13 +78,16 @@
       <h1 class="brand" id="add-title">Add purchase</h1>
     </header>
 
-    <form id="add-form" autocomplete="off">
+    <!-- novalidate: the app shows its own inline errors (aria-describedby +
+         role=alert) instead of the browser's native bubble -->
+    <form id="add-form" autocomplete="off" novalidate>
       <label class="field">
         <span class="field-label">Amount</span>
         <div class="amount-wrap">
           <span class="amount-symbol">$</span>
           <input type="text" inputmode="decimal" id="in-amount" placeholder="0.00" required>
         </div>
+        <p class="field-error" id="amount-error" role="alert" hidden></p>
       </label>
 
       <div class="field">
@@ -180,6 +183,7 @@
           <span class="amount-symbol">$</span>
           <input type="text" inputmode="decimal" id="in-budget" placeholder="2000">
         </div>
+        <p class="field-error" id="budget-error" role="alert" hidden></p>
       </label>
       <label class="field">
         <span class="field-label">Savings goal <em>(set aside each month)</em></span>
@@ -187,6 +191,7 @@
           <span class="amount-symbol">$</span>
           <input type="text" inputmode="decimal" id="in-savings" placeholder="0">
         </div>
+        <p class="field-error" id="savings-error" role="alert" hidden></p>
       </label>
       <label class="field">
         <span class="field-label">Cycle starts on day <em>(e.g. payday)</em></span>
@@ -206,7 +211,7 @@
       <div id="limit-rows"></div>
 
       <button class="primary-btn" type="submit" id="btn-settings-save">Save settings</button>
-      <p class="save-note" id="save-note" hidden>Saved.</p>
+      <p class="save-note" id="save-note" role="status" aria-live="polite"></p>
     </form>
 
     <div class="settings-block">
@@ -231,7 +236,7 @@
 
 <!-- Bottom navigation -->
 <nav class="tabbar" aria-label="Main">
-  <button class="tab is-active" data-view="home" aria-label="Home">
+  <button class="tab is-active" data-view="home" aria-label="Home" aria-current="page">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
     <span>Home</span>
   </button>
