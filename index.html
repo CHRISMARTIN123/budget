@@ -193,6 +193,15 @@
         <input type="number" inputmode="numeric" id="in-cyclestart" min="1" max="28" placeholder="1">
       </label>
 
+      <div class="field">
+        <span class="field-label">Unspent daily allowance</span>
+        <div class="seg" id="rollover-seg" role="tablist" aria-label="What happens to unspent daily allowance">
+          <button type="button" class="seg-btn" data-rollover="save" role="tab">Into savings</button>
+          <button type="button" class="seg-btn" data-rollover="spread" role="tab">Into next days</button>
+        </div>
+        <p class="field-hint" id="rollover-hint"></p>
+      </div>
+
       <h2 class="section-title limits-title">Category limits <em>(per cycle, optional)</em></h2>
       <div id="limit-rows"></div>
 

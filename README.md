@@ -31,9 +31,15 @@ screen). Dark mode follows your system setting.
   spending chart, **category budgets** (spent vs the limits you set, with
   over-limit flags), spending by category, and a **six-cycle monthly trend**.
   Filter by 7 days, 30 days, or this cycle.
+- **Daily rollover** — choose what happens to an under-spent day: **Into
+  savings** keeps a flat daily allowance and the leftover builds your savings;
+  **Into next days** shares the leftover across the days remaining in the
+  cycle, raising what you can spend later (and lowering it after an
+  over-spend). Home's "safe to spend today" reflects the choice.
 - **Settings** — monthly budget, savings goal, cycle start day (align to
-  payday), **per-category spending limits**, repeating-purchase management,
-  and your data: JSON backup export/import, **CSV export**, and erase.
+  payday), daily rollover mode, **per-category spending limits**,
+  repeating-purchase management, and your data: JSON backup export/import,
+  **CSV export**, and erase.
 
 ## Design
 

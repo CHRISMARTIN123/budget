@@ -26,11 +26,12 @@ function loadStore() {
         if (typeof data.cycleStartDay !== "number") data.cycleStartDay = 1;
         if (!data.categoryBudgets || typeof data.categoryBudgets !== "object") data.categoryBudgets = {};
         if (!Array.isArray(data.recurring)) data.recurring = [];
+        if (data.rolloverMode !== "spread" && data.rolloverMode !== "save") data.rolloverMode = "save";
         return data;
       }
     }
   } catch (_) { /* corrupted store — start fresh */ }
-  return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, categoryBudgets: {}, recurring: [], purchases: [] };
+  return { monthlyBudget: null, savingsGoal: 0, cycleStartDay: 1, categoryBudgets: {}, recurring: [], rolloverMode: "save", purchases: [] };
 }
 function saveStore() {
   localStorage.setItem(STORE_KEY, JSON.stringify(store));
@@ -126,34 +127,58 @@ function spentByCategoryBetween(from, to) {
   return map;
 }
 
+// what's available to spend this cycle after the savings goal is set aside
+function spendableAmount() {
+  return store.monthlyBudget == null ? null : Math.max(0, store.monthlyBudget - (store.savingsGoal || 0));
+}
+
+// Today's spendable allowance.
+//  - "save" mode: a flat budget ÷ cycle-length. Whatever you don't spend
+//    stays unspent and builds toward your savings.
+//  - "spread" mode: whatever is left this cycle ÷ the days that remain, so an
+//    under-spent day lifts the allowance on the days that follow (and an
+//    over-spent day lowers it).
+function dailyAllowanceToday() {
+  const spendable = spendableAmount();
+  if (spendable == null) return null;
+  const now = new Date();
+  const today = midnight(now);
+  const cycle = cycleRange(now);
+  if (store.rolloverMode === "spread") {
+    const spentBeforeToday = spentBetween(cycle.start, today);
+    const daysRemaining = Math.max(1, Math.round((cycle.end - today) / DAY_MS));
+    return Math.max(0, (spendable - spentBeforeToday) / daysRemaining);
+  }
+  return spendable / cycleLenDays(cycle);
+}
+
 function periodInfo() {
   const now = new Date();
   const today = midnight(now);
   const cycle = cycleRange(now);
   const cLen = cycleLenDays(cycle);
-  // what's available to spend after the savings goal is set aside
-  const spendable = store.monthlyBudget == null
-    ? null
-    : Math.max(0, store.monthlyBudget - (store.savingsGoal || 0));
-  const dailyRate = spendable == null ? null : spendable / cLen;
+  const spendable = spendableAmount();
+  const flatDaily = spendable == null ? null : spendable / cLen;
+  const todayAllowance = dailyAllowanceToday();
 
   if (state.period === "month") {
     const label = cycleStartDay() === 1 ? "Left this month" : "Left this cycle";
     return {
       label, budget: spendable, spent: spentBetween(cycle.start, cycle.end),
-      daysLeft: Math.round((cycle.end - today) / DAY_MS), dailyRate,
+      daysLeft: Math.round((cycle.end - today) / DAY_MS), todayAllowance, todayFlat: flatDaily,
     };
   }
   if (state.period === "week") {
     const from = startOfWeek(now);
     const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 7);
     return {
-      label: "Left this week", budget: dailyRate == null ? null : dailyRate * 7,
-      spent: spentBetween(from, to), daysLeft: Math.round((to - today) / DAY_MS), dailyRate,
+      label: "Left this week", budget: flatDaily == null ? null : flatDaily * 7,
+      spent: spentBetween(from, to), daysLeft: Math.round((to - today) / DAY_MS),
+      todayAllowance, todayFlat: flatDaily,
     };
   }
   const to = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-  return { label: "Left today", budget: dailyRate, spent: spentBetween(today, to), daysLeft: 0, dailyRate };
+  return { label: "Left today", budget: todayAllowance, spent: spentBetween(today, to), daysLeft: 0, todayAllowance, todayFlat: flatDaily };
 }
 
 /* ============ Home ============ */
@@ -205,19 +230,25 @@ function renderHome(animate) {
     const parts = [`of ${money(info.budget)}`];
     if (state.period === "month" && (store.savingsGoal || 0) > 0) parts.push(`saving ${money(store.savingsGoal)}`);
     if (state.period !== "day") parts.push(`${info.daysLeft} day${info.daysLeft === 1 ? "" : "s"} left`);
+    if (state.period === "day" && store.rolloverMode === "spread" && info.todayFlat != null) {
+      const rolled = info.todayAllowance - info.todayFlat;
+      if (rolled >= 0.01) parts.push(`+${money(rolled, true)} rolled in`);
+      else if (rolled <= -0.01) parts.push(`${money(rolled, true)} rolled out`);
+    }
     if (left < 0) parts.push("over budget");
     heroSub.textContent = parts.join(" · ");
     const pct = info.budget > 0 ? Math.min(100, (info.spent / info.budget) * 100) : 100;
     meterFill.style.width = pct.toFixed(1) + "%";
 
     // safe-to-spend today (PocketGuard-style), on month/week views
-    if (state.period !== "day" && info.dailyRate != null) {
+    if (state.period !== "day" && info.todayAllowance != null) {
       const today = midnight(new Date());
       const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-      const todayLeft = info.dailyRate - spentBetween(today, tomorrow);
+      const todayLeft = info.todayAllowance - spentBetween(today, tomorrow);
+      const rollNote = store.rolloverMode === "spread" ? " (rolling)" : "";
       heroToday.hidden = false;
       heroToday.textContent = todayLeft >= 0
-        ? `Safe to spend today · ${money(todayLeft, true)}`
+        ? `Safe to spend today${rollNote} · ${money(todayLeft, true)}`
         : `${money(-todayLeft, true)} over today's pace`;
     } else {
       heroToday.hidden = true;
@@ -982,10 +1013,22 @@ function renderRecurringList() {
   }
 }
 
+function updateRolloverUI(mode) {
+  document.querySelectorAll("#rollover-seg .seg-btn").forEach((b) => {
+    const on = b.dataset.rollover === mode;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  $("#rollover-hint").textContent = mode === "spread"
+    ? "Spend under your daily amount and the rest is shared across the days left, raising what you can spend later."
+    : "A flat daily amount. Whatever you don't spend builds toward your savings.";
+}
+
 function renderSettings() {
   $("#in-budget").value = store.monthlyBudget != null ? String(store.monthlyBudget) : "";
   $("#in-savings").value = store.savingsGoal > 0 ? String(store.savingsGoal) : "";
   $("#in-cyclestart").value = String(cycleStartDay());
+  updateRolloverUI(store.rolloverMode === "spread" ? "spread" : "save");
   renderLimitRows();
   renderRecurringList();
 }
@@ -998,6 +1041,11 @@ function parseNonNeg(raw) {
 }
 
 function setupSettings() {
+  $("#rollover-seg").addEventListener("click", (e) => {
+    const btn = e.target.closest(".seg-btn");
+    if (btn) updateRolloverUI(btn.dataset.rollover);
+  });
+
   $("#settings-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const v = parseAmount($("#in-budget").value);
@@ -1006,6 +1054,8 @@ function setupSettings() {
     if (goal == null || goal >= v) { $("#in-savings").select(); return; }
     const startRaw = parseInt($("#in-cyclestart").value, 10);
     const start = Number.isFinite(startRaw) ? Math.min(28, Math.max(1, startRaw)) : 1;
+    const activeRoll = $("#rollover-seg .seg-btn.is-active");
+    const rollover = activeRoll && activeRoll.dataset.rollover === "spread" ? "spread" : "save";
 
     const limits = {};
     for (const input of document.querySelectorAll("#limit-rows input")) {
@@ -1016,6 +1066,7 @@ function setupSettings() {
     store.monthlyBudget = v;
     store.savingsGoal = goal;
     store.cycleStartDay = start;
+    store.rolloverMode = rollover;
     store.categoryBudgets = limits;
     saveStore();
     renderAll();
@@ -1067,6 +1118,7 @@ function setupBackup() {
         store.cycleStartDay = typeof data.cycleStartDay === "number" ? data.cycleStartDay : 1;
         store.categoryBudgets = data.categoryBudgets && typeof data.categoryBudgets === "object" ? data.categoryBudgets : {};
         store.recurring = Array.isArray(data.recurring) ? data.recurring : [];
+        store.rolloverMode = data.rolloverMode === "spread" ? "spread" : "save";
         store.purchases = data.purchases.filter(
           (p) => p && typeof p.amount === "number" && typeof p.date === "string"
         );
