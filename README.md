@@ -40,6 +40,13 @@ screen). Dark mode follows your system setting.
   payday), daily rollover mode, **per-category spending limits**,
   repeating-purchase management, and your data: JSON backup export/import,
   **CSV export**, and erase.
+- **Bank CSV import** (Settings → Bank transactions) — download a
+  transaction-history CSV from your bank (built against DBS digibank exports;
+  tolerant of similar debit/credit or single-amount formats) and import it.
+  Everything is parsed locally in the browser, deposits are skipped, merchants
+  are auto-categorized (editable), rows you've imported before are excluded,
+  and possible duplicates of hand-logged purchases start unticked — nothing is
+  added until you confirm the review list.
 
 ## Design
 
