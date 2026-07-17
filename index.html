@@ -228,6 +228,12 @@
         <button type="button" class="ghost-btn" id="btn-import">Import backup</button>
         <input type="file" id="in-import" accept=".json,application/json" hidden>
       </div>
+      <h2 class="section-title">Bank transactions</h2>
+      <p class="field-hint">Download a transaction-history CSV from your bank (e.g. digibank internet banking) and import it here. You review every row before anything is added, and rows you've imported before are skipped.</p>
+      <div class="backup-row">
+        <button type="button" class="ghost-btn" id="btn-import-bank">Import bank CSV</button>
+        <input type="file" id="in-bank-csv" accept=".csv,text/csv,text/plain" hidden>
+      </div>
       <button type="button" class="danger-btn" id="btn-erase">Erase all data</button>
     </div>
   </section>
@@ -256,6 +262,17 @@
     <span>Settings</span>
   </button>
 </nav>
+
+<!-- Bank CSV review: nothing is added until confirmed here -->
+<dialog id="import-dialog" aria-labelledby="import-title">
+  <h2 class="dialog-title" id="import-title">Import bank transactions</h2>
+  <p class="dialog-sub" id="import-summary"></p>
+  <ul class="import-list" id="import-list"></ul>
+  <div class="dialog-actions">
+    <button type="button" class="ghost-btn" id="btn-import-cancel">Cancel</button>
+    <button type="button" class="primary-btn" id="btn-import-confirm">Add</button>
+  </div>
+</dialog>
 
 <div class="tooltip" id="tooltip" hidden></div>
 

@@ -38,6 +38,7 @@ function sanitizePurchases(list) {
         createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
       };
       if (p.recurringId != null) out.recurringId = String(p.recurringId);
+      if (p.importId != null) out.importId = String(p.importId);
       return out;
     });
 }
@@ -1227,11 +1228,265 @@ function setupBackup() {
     reader.readAsText(file);
   });
 
+  setupBankImport();
+
   $("#btn-erase").addEventListener("click", () => {
     if (!confirm("Erase ALL data — purchases, budget, and settings? This cannot be undone.")) return;
     if (!confirm("Really erase everything? Consider exporting a backup first.")) return;
     localStorage.removeItem(STORE_KEY);
     location.reload();
+  });
+}
+
+/* ============ Bank CSV import ============ */
+// Imports a transaction-history CSV downloaded from a bank (built against DBS
+// digibank exports, tolerant of similar formats). Everything happens locally:
+// the file is parsed in the browser, shown in a review dialog, and only the
+// rows the user confirms are added. Nothing is uploaded anywhere.
+
+// Minimal RFC-4180-ish parser: quoted fields, escaped quotes, CR/LF rows.
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      row.push(field); field = "";
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); field = "";
+      if (row.some((c) => c.trim() !== "")) rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  row.push(field);
+  if (row.some((c) => c.trim() !== "")) rows.push(row);
+  return rows;
+}
+
+// "17 Jul 2026", "17/07/2026" (day-first, as banks here use), "2026-07-17"
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+function parseCsvDate(s) {
+  const t = String(s).trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return mkDateKey(+m[1], +m[2], +m[3]);
+  m = t.match(/^(\d{1,2})[ -]([A-Za-z]{3})[A-Za-z]*[ -](\d{4})$/);
+  if (m && MONTHS[m[2].toLowerCase()]) return mkDateKey(+m[3], MONTHS[m[2].toLowerCase()], +m[1]);
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) return mkDateKey(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2], +m[1]);
+  return null;
+}
+function mkDateKey(y, mo, d) {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 2000 || y > 2100) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function parseCsvAmount(s) {
+  const t = String(s).trim();
+  if (!t) return null;
+  const isCredit = /\bCR\b/i.test(t);
+  const n = parseFloat(t.replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(n)) return null;
+  return { value: cents(Math.abs(n)), credit: isCredit || n < 0 };
+}
+
+// Ordered keyword rules — first hit wins, so "grabfood" lands on food before
+// "grab" lands on transport.
+const MERCHANT_RULES = [
+  ["food", ["grabfood", "foodpanda", "deliveroo", "ntuc", "fairprice", "cold storage", "sheng siong", "giant", "mcdonald", "kfc", "burger", "pizza", "subway", "starbucks", "coffee", "kopitiam", "toast", "hawker", "restaurant", "cafe", "bakery", "sushi", "food"]],
+  ["transport", ["grab", "gojek", "ryde", "comfort", "taxi", "mrt", "ez-link", "ezlink", "ez link", "transit", "bus/mrt", "shell", "esso", "caltex", "spc", "petrol", "parking", "carpark"]],
+  ["fitness", ["gym", "fitness", "activesg", "classpass", "yoga", "pilates", "virgin active"]],
+  ["health", ["guardian", "watsons", "pharmacy", "clinic", "dental", "hospital", "polyclinic", "medical", "tcm", "doctor"]],
+  ["bills", ["singtel", "starhub", "m1 ", "circles", "simba", "myrepublic", "sp group", "sp services", "utilities", "insurance", "aia", "prudential", "great eastern", "income", "electric", "broadband", "town council"]],
+  ["entertainment", ["netflix", "spotify", "disney", "youtube", "hbo", "prime video", "cinema", "golden village", "cathay", "shaw", "steam", "playstation", "nintendo", "ticket"]],
+  ["shopping", ["shopee", "lazada", "amazon", "qoo10", "taobao", "uniqlo", "ikea", "zara", "h&m", "decathlon", "courts", "challenger", "popular", "mall"]],
+];
+function guessCategory(desc) {
+  const d = desc.toLowerCase();
+  for (const [cat, words] of MERCHANT_RULES) {
+    for (const w of words) if (d.includes(w)) return cat;
+  }
+  return "other";
+}
+
+// Find the header row and map its columns. Bank exports carry metadata lines
+// (account number, balances) above the real header, so scan for the first row
+// that names a date column and a debit/withdrawal/amount column.
+function mapBankColumns(rows) {
+  for (let i = 0; i < Math.min(rows.length, 25); i++) {
+    const cells = rows[i].map((c) => c.trim().toLowerCase());
+    const dateIdx = cells.findIndex((c) => /date/.test(c));
+    if (dateIdx === -1) continue;
+    const debitIdx = cells.findIndex((c) => /debit|withdraw/.test(c));
+    const creditIdx = cells.findIndex((c) => /credit|deposit/.test(c));
+    const amountIdx = debitIdx === -1 ? cells.findIndex((c) => /amount/.test(c)) : -1;
+    if (debitIdx === -1 && amountIdx === -1) continue;
+    const descIdx = [];
+    cells.forEach((c, j) => {
+      if (j !== dateIdx && j !== debitIdx && j !== creditIdx && j !== amountIdx && c !== "") descIdx.push(j);
+    });
+    return { headerRow: i, dateIdx, debitIdx, creditIdx, amountIdx, descIdx };
+  }
+  return null;
+}
+
+function parseBankCsv(text) {
+  const rows = parseCsv(text);
+  const cols = mapBankColumns(rows);
+  if (!cols) return null;
+
+  const existingImportIds = new Set(store.purchases.map((p) => p.importId).filter(Boolean));
+  const manualKeys = new Set(store.purchases.filter((p) => !p.importId).map((p) => `${p.date}|${p.amount.toFixed(2)}`));
+
+  const out = { rows: [], skippedCredits: 0, alreadyImported: 0 };
+  for (let i = cols.headerRow + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const date = parseCsvDate(r[cols.dateIdx]);
+    if (!date) continue;
+
+    let amt = null;
+    if (cols.debitIdx !== -1) {
+      amt = parseCsvAmount(r[cols.debitIdx]);
+      if (!amt && cols.creditIdx !== -1 && parseCsvAmount(r[cols.creditIdx])) { out.skippedCredits++; continue; }
+      if (amt && amt.credit) { out.skippedCredits++; continue; }
+    } else {
+      amt = parseCsvAmount(r[cols.amountIdx]);
+      if (amt && amt.credit) { out.skippedCredits++; continue; }
+    }
+    if (!amt || amt.value <= 0) continue;
+
+    // drop cells that are just bank transaction-type codes (POS, GIRO, …)
+    const note = cols.descIdx.map((j) => (r[j] || "").trim())
+      .filter((c) => c && !/^(POS|GIRO|NETS|IBG|FAST|ITR|MST|ICT|ATM|BILL|TFR)$/i.test(c))
+      .join(" ").replace(/\s+/g, " ").slice(0, 60);
+    const importId = `${date}|${amt.value.toFixed(2)}|${note.slice(0, 24)}`;
+    if (existingImportIds.has(importId)) { out.alreadyImported++; continue; }
+
+    out.rows.push({
+      date, amount: amt.value, note, category: guessCategory(note), importId,
+      dup: manualKeys.has(`${date}|${amt.value.toFixed(2)}`),
+      checked: !manualKeys.has(`${date}|${amt.value.toFixed(2)}`),
+    });
+  }
+  out.rows.sort((a, b) => b.date.localeCompare(a.date));
+  return out;
+}
+
+let importBatch = null;
+
+function renderImportDialog() {
+  const list = $("#import-list");
+  list.textContent = "";
+  const selected = importBatch.rows.filter((r) => r.checked).length;
+
+  const bits = [`${importBatch.rows.length} transaction${importBatch.rows.length === 1 ? "" : "s"} found`];
+  if (importBatch.alreadyImported) bits.push(`${importBatch.alreadyImported} already imported`);
+  if (importBatch.skippedCredits) bits.push(`${importBatch.skippedCredits} deposit${importBatch.skippedCredits === 1 ? "" : "s"} skipped`);
+  $("#import-summary").textContent = bits.join(" · ") + ". Untick anything you don't want.";
+
+  for (const row of importBatch.rows) {
+    const li = document.createElement("li");
+    li.className = "import-row";
+
+    const label = document.createElement("label");
+    label.className = "import-check";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = row.checked;
+    cb.addEventListener("change", () => {
+      row.checked = cb.checked;
+      const n = importBatch.rows.filter((r) => r.checked).length;
+      $("#btn-import-confirm").textContent = `Add ${n}`;
+      $("#btn-import-confirm").disabled = n === 0;
+    });
+    label.append(cb);
+
+    const main = document.createElement("div");
+    main.className = "import-main";
+    const title = document.createElement("p");
+    title.className = "import-title";
+    title.textContent = row.note || "(no description)";
+    const meta = document.createElement("p");
+    meta.className = "import-meta";
+    meta.textContent = friendlyDate(row.date) + (row.dup ? " · looks already logged" : "");
+    main.append(title, meta);
+
+    const right = document.createElement("div");
+    right.className = "import-right";
+    const amount = document.createElement("span");
+    amount.className = "import-amount";
+    amount.textContent = money(row.amount, true);
+    const sel = document.createElement("select");
+    sel.className = "import-cat";
+    sel.setAttribute("aria-label", "Category for " + (row.note || "this transaction"));
+    for (const c of CATEGORIES) {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.label;
+      opt.selected = c.id === row.category;
+      sel.append(opt);
+    }
+    sel.addEventListener("change", () => { row.category = sel.value; });
+    right.append(amount, sel);
+
+    li.append(label, main, right);
+    list.append(li);
+  }
+
+  $("#btn-import-confirm").textContent = `Add ${selected}`;
+  $("#btn-import-confirm").disabled = selected === 0;
+}
+
+function setupBankImport() {
+  const dialog = $("#import-dialog");
+
+  $("#btn-import-bank").addEventListener("click", () => $("#in-bank-csv").click());
+  $("#in-bank-csv").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const batch = parseBankCsv(String(reader.result));
+      e.target.value = "";
+      if (!batch) {
+        alert("Couldn't read that file. Export the transaction-history CSV from your bank's site or app and try again.");
+        return;
+      }
+      if (batch.rows.length === 0) {
+        const why = batch.alreadyImported ? " — everything in it was imported before" : "";
+        alert(`No new spending found in that file${why}.`);
+        return;
+      }
+      importBatch = batch;
+      renderImportDialog();
+      dialog.showModal();
+    };
+    reader.readAsText(file);
+  });
+
+  $("#btn-import-cancel").addEventListener("click", () => { importBatch = null; dialog.close(); });
+  $("#btn-import-confirm").addEventListener("click", () => {
+    const picked = importBatch.rows.filter((r) => r.checked);
+    for (const r of picked) {
+      store.purchases.push({
+        id: uid(), amount: r.amount, category: r.category, note: r.note,
+        date: r.date, createdAt: Date.now(), importId: r.importId,
+      });
+    }
+    importBatch = null;
+    dialog.close();
+    saveStore();
+    renderAll();
+    const note = $("#save-note");
+    note.textContent = `Added ${picked.length} purchase${picked.length === 1 ? "" : "s"}.`;
+    setTimeout(() => { note.textContent = ""; }, 2500);
   });
 }
 

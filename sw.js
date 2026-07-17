@@ -1,4 +1,4 @@
-const CACHE = "budget-v8";
+const CACHE = "budget-v9";
 const ASSETS = [
   "./", "index.html", "styles.css", "app.js", "manifest.webmanifest",
   "icon-180.png", "icon-192.png", "icon-512.png",
