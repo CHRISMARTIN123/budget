@@ -296,16 +296,28 @@ function renderHome(animate) {
     const pct = info.budget > 0 ? Math.min(100, (info.spent / info.budget) * 100) : 100;
     meterFill.style.width = pct.toFixed(1) + "%";
 
-    // safe-to-spend today (PocketGuard-style), on month/week views
+    // safe-to-spend today (PocketGuard-style), on month/week views. The active
+    // rollover mode changes what these numbers mean, so always name it: a chip
+    // for the mode plus a tail spelling out where an under/over day goes.
     if (state.period !== "day" && info.todayAllowance != null) {
       const today = midnight(new Date());
       const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
       const todayLeft = info.todayAllowance - spentBetween(today, tomorrow);
-      const rollNote = store.rolloverMode === "spread" ? " (rolling)" : "";
-      heroToday.hidden = false;
-      heroToday.textContent = todayLeft >= 0
-        ? `Safe to spend today${rollNote} · ${money(todayLeft, true)}`
+      const spread = store.rolloverMode === "spread";
+      const under = todayLeft >= 0;
+      const head = under
+        ? `Safe to spend today · ${money(todayLeft, true)}`
         : `${money(-todayLeft, true)} over today's pace`;
+      const tail = spread
+        ? (under ? "rolls to later days" : "comes off later days")
+        : (under ? "unspent saved" : "later days unaffected");
+
+      heroToday.hidden = false;
+      heroToday.textContent = "";
+      const chip = document.createElement("span");
+      chip.className = "hero-today-tag";
+      chip.textContent = spread ? "Rolling" : "Flat";
+      heroToday.append(chip, document.createTextNode(`${head} · ${tail}`));
     } else {
       heroToday.hidden = true;
     }

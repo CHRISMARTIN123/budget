@@ -654,6 +654,19 @@ dialog .amount-wrap input { font-size: var(--text-lg); padding: 10px var(--space
   font-weight: 500;
   color: var(--ink-2);
 }
+.hero-today-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+  white-space: nowrap;
+}
 .view-all {
   display: block;
   width: 100%;
