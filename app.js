@@ -36,6 +36,7 @@ function sanitizePurchases(list) {
         note: typeof p.note === "string" ? p.note.slice(0, 60) : "",
         date: p.date,
         createdAt: typeof p.createdAt === "number" ? p.createdAt : Date.now(),
+        paid: p.paid !== false, // absent (old data) or true → paid; only explicit false is unpaid
       };
       if (p.recurringId != null) out.recurringId = String(p.recurringId);
       if (p.importId != null) out.importId = String(p.importId);
@@ -473,8 +474,9 @@ function friendlyDate(key) {
 
 function purchaseRow(p, { showDate }) {
   const cat = catById(p.category);
+  const paid = p.paid !== false;
   const li = document.createElement("li");
-  li.className = "txn";
+  li.className = "txn" + (paid ? "" : " is-unpaid");
 
   const icon = document.createElement("span");
   icon.className = "txn-icon";
@@ -488,12 +490,33 @@ function purchaseRow(p, { showDate }) {
   const meta = document.createElement("p");
   meta.className = "txn-meta";
   meta.textContent = showDate ? `${cat.label} · ${friendlyDate(p.date)}` : cat.label;
+  if (!paid) {
+    const tag = document.createElement("span");
+    tag.className = "txn-unpaid-tag";
+    tag.textContent = "Unpaid";
+    meta.append(" ", tag);
+  }
   main.append(title, meta);
   main.addEventListener("click", () => startEdit(p));
 
   const amount = document.createElement("span");
   amount.className = "txn-amount";
   amount.textContent = money(p.amount, true);
+
+  // paid toggle: filled check = paid, hollow = unpaid. Tap flips it in place.
+  const paidBtn = document.createElement("button");
+  paidBtn.type = "button";
+  paidBtn.className = "txn-paid" + (paid ? " is-paid" : "");
+  paidBtn.setAttribute("aria-pressed", String(paid));
+  paidBtn.setAttribute("aria-label", paid ? "Paid — mark as unpaid" : "Unpaid — mark as paid");
+  paidBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+  paidBtn.addEventListener("click", () => {
+    const target = store.purchases.find((x) => x.id === p.id);
+    if (!target) return;
+    target.paid = target.paid === false; // flip: unpaid→true, paid/undefined→false
+    saveStore();
+    renderAll();
+  });
 
   const del = document.createElement("button");
   del.className = "txn-del";
@@ -507,7 +530,11 @@ function purchaseRow(p, { showDate }) {
     renderAll();
   });
 
-  li.append(icon, main, amount, del);
+  const actions = document.createElement("div");
+  actions.className = "txn-actions";
+  actions.append(paidBtn, del);
+
+  li.append(icon, main, amount, actions);
   return li;
 }
 
@@ -558,8 +585,10 @@ function renderHistory() {
   });
 
   const total = items.reduce((s, p) => s + p.amount, 0);
+  const unpaidTotal = items.reduce((s, p) => (p.paid === false ? s + p.amount : s), 0);
   $("#hist-summary").textContent = items.length
-    ? `${items.length} purchase${items.length === 1 ? "" : "s"} · ${money(total)}`
+    ? `${items.length} purchase${items.length === 1 ? "" : "s"} · ${money(total)}` +
+      (unpaidTotal > 0 ? ` · ${money(unpaidTotal)} unpaid` : "")
     : "";
   $("#hist-empty").hidden = items.length > 0;
 
@@ -653,6 +682,7 @@ function startEdit(p) {
   $("#in-amount").value = p.amount.toFixed(2);
   $("#in-note").value = p.note || "";
   $("#in-date").value = p.date;
+  $("#in-paid").checked = p.paid !== false;
   $("#in-repeat").checked = false;
   $("#repeat-row").hidden = true; // repeat is set when creating, managed in Settings after
   $("#add-title").textContent = "Edit purchase";
@@ -676,13 +706,14 @@ function setupAddForm() {
     setFieldError($("#in-amount"), $("#amount-error"), null);
     const date = $("#in-date").value || todayKey();
     const note = $("#in-note").value.trim();
+    const paid = $("#in-paid").checked;
 
     const editing = state.editingId && store.purchases.find((p) => p.id === state.editingId);
     if (editing) {
-      Object.assign(editing, { amount, category: state.selectedCat, note, date });
+      Object.assign(editing, { amount, category: state.selectedCat, note, date, paid });
     } else {
       const purchase = {
-        id: uid(), amount, category: state.selectedCat, note, date, createdAt: Date.now(),
+        id: uid(), amount, category: state.selectedCat, note, date, createdAt: Date.now(), paid,
       };
       if ($("#in-repeat").checked) {
         const rule = {
@@ -1205,9 +1236,9 @@ function setupBackup() {
 
   $("#btn-export-csv").addEventListener("click", () => {
     const esc = (s) => `"${String(s).replace(/"/g, '""')}"`;
-    const lines = ["date,amount,category,note"];
+    const lines = ["date,amount,category,note,paid"];
     for (const p of sortedPurchases()) {
-      lines.push([p.date, p.amount.toFixed(2), catById(p.category).label, esc(p.note || "")].join(","));
+      lines.push([p.date, p.amount.toFixed(2), catById(p.category).label, esc(p.note || ""), p.paid === false ? "no" : "yes"].join(","));
     }
     downloadBlob(lines.join("\n"), "text/csv", `budget-${todayKey()}.csv`);
   });
@@ -1489,7 +1520,7 @@ function setupBankImport() {
     for (const r of picked) {
       store.purchases.push({
         id: uid(), amount: r.amount, category: r.category, note: r.note,
-        date: r.date, createdAt: Date.now(), importId: r.importId,
+        date: r.date, createdAt: Date.now(), importId: r.importId, paid: true,
       });
     }
     importBatch = null;

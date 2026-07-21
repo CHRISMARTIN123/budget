@@ -24,9 +24,14 @@ screen). Dark mode follows your system setting.
   Tap a purchase to edit it, × to delete.
 - **History** — every purchase, grouped by day with day totals, plus search
   and category filter chips.
-- **Add** (the + tab) — amount, category, note, date, and an optional
-  **"Repeats monthly"** toggle for rent, subscriptions, and gym fees: the
-  purchase is re-added automatically on that day each month.
+- **Add** (the + tab) — amount, category, note, date, an **"Already paid"**
+  toggle (untick to log something you owe but haven't paid yet), and an
+  optional **"Repeats monthly"** toggle for rent, subscriptions, and gym fees:
+  the purchase is re-added automatically on that day each month.
+- **Paid / unpaid** — every purchase row shows a paid toggle (filled check =
+  paid, hollow = unpaid) you can tap to flip, and unpaid rows are tagged
+  "Unpaid". History shows the total still owed. Unpaid purchases still count
+  toward your budget — the flag is a reminder of what's outstanding.
 - **Insights** — stat tiles with **vs-previous-period deltas**, a per-day
   spending chart, **category budgets** (spent vs the limits you set, with
   over-limit flags), spending by category, and a **six-cycle monthly trend**.
